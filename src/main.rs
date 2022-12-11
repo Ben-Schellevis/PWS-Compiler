@@ -1,5 +1,5 @@
 use core::panic;
-use std::{default, fs};
+use std::fs;
 
 #[derive(Copy, Clone, Debug)]
 enum TokenType {
@@ -23,11 +23,12 @@ struct Token {
     type_: TokenType,
     data: String,
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct CharPattern {
     patt: Vec<char>,
     infinite: bool,
 }
+
 impl PartialEq<char> for CharPattern {
     fn eq(&self, other: &char) -> bool {
         if self.patt.contains(other) {
@@ -38,30 +39,29 @@ impl PartialEq<char> for CharPattern {
 }
 struct StringPattern {
     pub patt: Vec<CharPattern>,
+    pub type_: TokenType
 }
 
 enum Pattern {
     Pat(StringPattern),
-    Str(String),
+    Str((String,TokenType)),
 }
 
 impl Pattern {
-    fn new_literal(patrn: String) -> Pattern {
-        Pattern::Str(patrn)
-    }
 
-    fn new_pattern(pattern: Vec<(Vec<char>, bool)>) -> Pattern {
+    fn new_pattern(pattern: Vec<(String, bool)>, type_: TokenType) -> Pattern {
         let mut char_patterns: Vec<CharPattern> = vec![];
 
         for patt in pattern {
             let char_pattern = CharPattern {
-                patt: patt.0,
+                patt: patt.0.chars().collect(),
                 infinite: patt.1,
             };
             char_patterns.push(char_pattern);
         }
         return Pattern::Pat(StringPattern {
             patt: char_patterns,
+            type_
         });
     }
 }
@@ -73,20 +73,28 @@ struct SymbolTable {
 #[derive(Debug)]
 struct Node {
     connections: Vec<(Node, CharPattern)>,
+    infinite: Option<CharPattern>,
     is_end: bool,
     token_type: TokenType,
 }
 
 impl Node {
-    fn new(defualt_data: TokenType, end: bool) -> Node {
+    fn new(defualt_data: TokenType, end: bool, infinite: Option<CharPattern>) -> Node {
         return Node {
             connections: vec![],
+            infinite,
             is_end: end,
             token_type: defualt_data,
         };
     }
 
-    fn insert(&mut self, _match: CharPattern, end: bool) -> &mut Node {
+    fn insert(
+        &mut self,
+        _match: CharPattern,
+        end: bool,
+        infinite: Option<CharPattern>,
+        type_: TokenType
+    ) -> &mut Node {
         let i = &self
             .connections
             .iter()
@@ -95,7 +103,7 @@ impl Node {
         let node: &mut Node = match i {
             Some(n) => &mut self.connections[n.clone()].0,
             None => {
-                let n = Node::new(self.token_type, end);
+                let n = Node::new(type_, end, infinite);
 
                 self.connections.push((n, _match));
 
@@ -115,7 +123,7 @@ struct DFA<'a> {
 
 impl<'a> DFA<'a> {
     fn new(table: SymbolTable, start_node: &'a mut Node) -> DFA<'a> {
-        let mut strings: Vec<String> = vec![];
+        let mut strings: Vec<(String,TokenType)> = vec![];
         let mut patterns: Vec<StringPattern> = vec![];
         for p in table.data {
             match p {
@@ -128,7 +136,7 @@ impl<'a> DFA<'a> {
             }
         }
 
-        for string in strings {
+        for (string, type_) in strings {
             //Get all chars of the string
             let mut it = string.chars().peekable();
 
@@ -146,15 +154,18 @@ impl<'a> DFA<'a> {
                 if first_iter {
                     //Check if any String patterns macht with the char
 
-                    let i = patterns.iter().position(|x| x.patt[0] == c);
+                    let pos = patterns.iter().position(|x| x.patt[0] == c);
 
-                    if let Some(i) = i {
-                        //let vec = &mut patterns[i].patt[0].patt;
+                    if let Some(pos) = pos {
+                        let vec = &mut patterns[pos].patt[0].patt;
 
-                        //let index = vec.iter().position(|x| *x == c).expect("Char not in vec even tough contains returned true.");
-                        //vec.remove(index);
+                        let index = vec
+                            .iter()
+                            .position(|x| *x == c)
+                            .expect("Char not in vec even tough contains returned true.");
+                        vec.remove(index);
 
-                        string_pattern = Some(&patterns[i]);
+                        string_pattern = Some(&patterns[pos]);
                         end = true;
                     }
                 } else if let Some(pattern) = string_pattern {
@@ -164,6 +175,7 @@ impl<'a> DFA<'a> {
                     } else {
                         string_pattern = None;
                     }
+                    i += 1;
                 }
 
                 //Create CharPattern from the char
@@ -172,11 +184,10 @@ impl<'a> DFA<'a> {
                     infinite: false,
                 };
 
-                //Create the node
                 first_iter = false;
 
-                i += 1;
-                node = node.insert(char_pattern, end);
+                //Create the node
+                node = node.insert(char_pattern, end, None, type_);
             }
         }
 
@@ -185,35 +196,14 @@ impl<'a> DFA<'a> {
             let mut it = pattern.patt.into_iter().peekable();
             while let Some(char_pattern) = it.next() {
                 let end = it.peek().is_none();
-                node = node.insert(char_pattern, end);
+                let mut inf = None;
+                if char_pattern.infinite {
+                    inf = Some(char_pattern.clone());
+                }
+                node = node.insert(char_pattern, end, inf, pattern.type_);
             }
         }
 
-        /*
-        for p in &table.data {
-            match p {
-                Pattern::Str(str) => {
-                    let mut it = str.chars().peekable();
-                    let mut node = &mut *start_node;
-                    while let Some(c) = it.next() {
-                        let end = it.peek().is_none();
-                        let char_pattern = CharPattern{
-                            patt: vec![c],
-                            infinite: false
-                        };
-                        node = node.insert(char_pattern, end);
-                    }
-                }
-                Pattern::Pat(pat) => {
-                    //let patterns = pat.patt;
-
-                    //for char_pattern  in patterns {
-                        //let position = start_node.connections.iter().position(|x| x.1 == char_pattern);
-                    //}
-                }
-            }
-        }
-        */
         DFA {
             state: start_node,
             start_node: start_node,
@@ -227,15 +217,25 @@ impl<'a> DFA<'a> {
         if let Some(c) = c {
             position = checks.iter().position(|x| **x == c);
         }
+
+        // check if we have a infite connection:
+
         if let Some(i) = position {
             let node = &node.connections[i].0;
             self.state = node;
             None
         } else {
-            if node.is_end {
-                return Some(TokenType::Keyword);
+            if let Some(inf) = &node.infinite {
+                if let Some(c) = c {
+                    if *inf == c {
+                        return None;
+                    }
+                }
             }
-            panic!("Invalid charter for current set");
+            if node.is_end {
+                return Some(node.token_type);
+            }
+            panic!("Invalid charter for current set {:#?}", c);
         }
     }
 
@@ -245,9 +245,6 @@ impl<'a> DFA<'a> {
 }
 
 struct Lexer<'a> {
-    //the output of the lexer
-    pub tokens: Vec<Token>,
-
     chars: Vec<char>,
     dfa: DFA<'a>,
     file_index: usize,
@@ -259,9 +256,7 @@ impl<'a> Lexer<'a> {
         let table = SymbolTable { data: patterns };
         let dfa = DFA::new(table, starting_node);
 
-        println!("{dfa:#?}");
         Lexer {
-            tokens: vec![],
             chars,
             dfa,
             file_index: 0,
@@ -270,12 +265,12 @@ impl<'a> Lexer<'a> {
 
     fn next_char(&mut self) -> Option<char> {
         let mut r: Option<char> = None;
-        let mut i = self.file_index;
+        let i = self.file_index;
         for c in self.chars.iter().skip(self.file_index) {
-            i += 1;
             match c {
                 ' ' | '\n' | '\r' => {
-                    continue;
+                    self.file_index = i + 1;
+                    return None
                 }
                 _ => {
                     r = Some(c.clone());
@@ -283,7 +278,7 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        self.file_index = i;
+        self.file_index = i + 1;
         return r;
     }
 
@@ -291,23 +286,19 @@ impl<'a> Lexer<'a> {
         let mut string = String::new();
 
         let ch = self.next_char();
+        let mut to_push = ch?;
         let mut x = self.dfa.solve_next(ch);
 
-        if let Some(ch) = ch {
-            string.push(ch);
-        } else {
-            return None;
-        }
 
         while let None = x {
+            string.push(to_push);
             let ch = self.next_char();
             if let Some(ch) = ch {
-                string.push(ch);
+                to_push = ch;
             }
             x = self.dfa.solve_next(ch);
         }
         self.file_index -= 1;
-        string.pop();
 
         let res = x.unwrap();
 
@@ -316,33 +307,48 @@ impl<'a> Lexer<'a> {
             data: string,
         };
 
-        println!("{token:#?}");
-
         self.dfa.reset();
 
         Some(token)
     }
 }
 
+macro_rules! pat {
+    ( $( $x:expr, $y:expr ),* , type: $z:expr ) => {
+        Pattern::new_pattern(vec![ $( ($x.to_owned(), $y) ),* ], $z)
+    };
+}
+
 fn main() {
     let raw_text = fs::read_to_string("/mnt/c/programming/files/rust/PWS-Compiler/source.txt")
         .expect("Should have been able to read the file");
 
-    use Pattern::Str;
+    let mut node = Node::new(TokenType::Unkown, false, None);
 
-    let mut node = Node::new(TokenType::Keyword, false);
-    let strings = vec![Pattern::Pat(StringPattern {
-        patt: vec![CharPattern {
-            patt: vec!['+','-'],
-            infinite: false
-        },
-        CharPattern{
-            patt: vec!['0','1','2','3','4','5','6','7','8','9'],
-            infinite: true
-        }],
-    })];
+    let strings = vec![
+        pat!("1234567890", true, type: TokenType::Literal),
+
+        pat!("abcdefghijklmnopqrstuvwxyz", true, type: TokenType::Identifier),
+        pat!("abcdefghijklmnopqrstuvwxyz", true, "(", false, ")", false, type: TokenType::Keyword),
+        pat!("+-", false,  type: TokenType::Operator),
+        Pattern::Str(("if".to_owned(),TokenType::Keyword)),
+        Pattern::Str(("===".to_owned(),TokenType::Operator)),
+    ];
+
     let mut lex = Lexer::new(raw_text, strings, &mut node);
+
+    let c = lex.next_token();
+    println!("{:#?}", c);
+
+    let c = lex.next_token();
+    println!("{:#?}", c);
+
+    let c = lex.next_token();
+    println!("{:#?}", c);
+
+    let c = lex.next_token();
+    println!("{:#?}", c);
+
+    let c = lex.next_token();
+    println!("{:#?}", c);
 }
-
-
-

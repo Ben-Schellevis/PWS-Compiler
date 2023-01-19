@@ -34,7 +34,7 @@ pub mod lexer {
         infinite: bool,
     }
     impl CharPattern {
-        fn contains(&self, other: &CharPattern) -> bool {
+        fn includes_all(&self, other: &CharPattern) -> bool {
             for c in &other.patt {
                 if !(self.patt.contains(c)) {
                     return false;
@@ -139,7 +139,7 @@ pub mod lexer {
             let i = &self
                 .connections
                 .iter()
-                .position(|x| -> bool { x.1.contains(&_match) });
+                .position(|x| -> bool { x.1.includes_all(&_match) });
 
             let node: &mut Node = match i {
                 Some(n) => {
@@ -148,8 +148,14 @@ pub mod lexer {
                         node.0.token_type = type_;
                         &mut self.connections[n.clone()].0
                     } else {
+                        let mut type_ = type_;
+                        let mut end = end;
                         node.1.remove(&_match);
 
+                        if !end {
+                            type_ = node.0.token_type;
+                            end = true;
+                        }
                         let mut n = Node::new(type_, end, infinite);
                         n.connections.push(node.clone());
                         self.connections.push((n, _match));

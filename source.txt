@@ -1,3 +1,4 @@
-if 1+1-2 > 38*2 do
-    let x = 1;
+func greater_than_two(abcd: int) 
+    let x: bool = abcd > 2;
 end
+

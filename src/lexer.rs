@@ -3,6 +3,14 @@ pub mod lexer {
     use core::panic;
     use std::{str::Chars};
 
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub enum Literal {
+        Bool,
+        Number,
+        String,
+    }
+
     #[derive(Copy, Clone, Debug, PartialEq)]
     pub enum TokenType {
         //If else for etc.
@@ -12,7 +20,7 @@ pub mod lexer {
         Identifier,
 
         //String or number given by the code
-        Literal,
+        Literal(Literal),
 
         //any of the mathmatical or logical opertors
         Operator,
@@ -277,6 +285,7 @@ pub mod lexer {
         dfa: DFA<'a>,
         iter: Chars<'a>,
         last_char: Option<char>,
+        peek_state: Option<Token>
     }
 
     impl<'a> Lexer<'a> {
@@ -287,6 +296,7 @@ pub mod lexer {
                 dfa,
                 iter,
                 last_char: None,
+                peek_state: None
             }
         }
 
@@ -324,7 +334,19 @@ pub mod lexer {
             return c;
         }
 
+
+        pub fn peek_next_token(&mut self) -> Option<Token>{
+            let tok = self.next_token();
+            self.peek_state = tok.clone();
+            return tok;
+        }
+
         pub fn next_token(&mut self) -> Option<Token> {
+            if let Some(token) = self.peek_state.clone() {
+                self.peek_state = None;
+                return Some(token);
+            }
+
             let mut string = String::new();
             let ch = self.nextcharvalid()?;
             let mut to_push = ch;

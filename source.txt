@@ -1,4 +1,10 @@
-func greater_than_two(abcd: int) 
-    let x: bool = abcd > 2;
+func print(x:int):void end
+
+func mult(x:int y:int):int
+    return (x * y) 
 end
 
+let x:int = 1;
+let b:int = 4;
+
+((x) (b) -> mult) -> print;

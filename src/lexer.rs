@@ -1,8 +1,7 @@
 #[macro_use]
 pub mod lexer {
-    use core::panic;
-    use std::{str::Chars};
-
+    use core::{panic};
+    use std::str::Chars;
 
     #[derive(Copy, Clone, Debug, PartialEq)]
     pub enum Literal {
@@ -144,37 +143,51 @@ pub mod lexer {
             infinite: Option<CharPattern>,
             type_: TokenType,
         ) -> &mut Node {
+            // find any clashing patterns
             let i = &self
                 .connections
                 .iter()
-                .position(|x| -> bool { x.1.includes_all(&_match) });
+                .enumerate()
+                .filter(|(_, x)|  -> bool { x.1.includes_all(&_match) })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+                //.position(|x| -> bool { x.1.includes_all(&_match) });
 
-            let node: &mut Node = match i {
-                Some(n) => {
-                    let node = &mut self.connections[n.clone()];
-                    if node.1.equals(&_match) {
-                        node.0.token_type = type_;
-                        &mut self.connections[n.clone()].0
-                    } else {
-                        let mut type_ = type_;
-                        let mut end = end;
-                        node.1.remove(&_match);
-
-                        if !end {
-                            type_ = node.0.token_type;
-                            end = true;
-                        }
-                        let mut n = Node::new(type_, end, infinite);
-                        n.connections.push(node.clone());
-                        self.connections.push((n, _match));
-                        &mut self.connections.last_mut().unwrap().0
-                    }
-                }
-                None => {
+            let node: &mut Node = match i.len() {
+                
+                0 => {
                     let n = Node::new(type_, end, infinite);
 
                     self.connections.push((n, _match));
 
+                    &mut self.connections.last_mut().unwrap().0
+                }
+                _ => {
+                    for n in i {
+                        let node = &mut self.connections[n.clone()];
+                        if node.1.equals(&_match.clone()) {
+                            if !node.0.is_end {
+                                node.0.token_type = type_;
+                                node.0.is_end = true;
+                            }
+                            return &mut self.connections[n.clone()].0;
+                        } else {
+                            let mut type_ = type_;
+                            let mut end = end;
+                            node.1.remove(&_match);
+    
+                            //if this is not an end node make sure it type is changed
+                            if !end {
+                                type_ = node.0.token_type;
+                                end = true;
+                            }
+    
+                            let mut n = Node::new(type_, end, infinite.clone());
+                            n.connections.push(node.clone());
+                            self.connections.push((n, _match.clone()));
+                        }
+
+                    }
                     &mut self.connections.last_mut().unwrap().0
                 }
             };
@@ -240,7 +253,6 @@ pub mod lexer {
                 }
             }
 
-            //print!("{:#?}", start_node);
             DFA {
                 state: start_node,
                 start_node: start_node,
@@ -285,18 +297,22 @@ pub mod lexer {
         dfa: DFA<'a>,
         iter: Chars<'a>,
         last_char: Option<char>,
-        peek_state: Option<Token>
+        peek_state: Option<Token>,
     }
 
     impl<'a> Lexer<'a> {
-        pub fn new(iter: Chars<'a>, patterns: Vec<Pattern>, starting_node: &'a mut Node) -> Lexer<'a> {
+        pub fn new(
+            iter: Chars<'a>,
+            patterns: Vec<Pattern>,
+            starting_node: &'a mut Node,
+        ) -> Lexer<'a> {
             let table = SymbolTable { data: patterns };
             let dfa = DFA::new(table, starting_node);
             Lexer {
                 dfa,
                 iter,
                 last_char: None,
-                peek_state: None
+                peek_state: None,
             }
         }
 
@@ -334,8 +350,7 @@ pub mod lexer {
             return c;
         }
 
-
-        pub fn peek_next_token(&mut self) -> Option<Token>{
+        pub fn peek_next_token(&mut self) -> Option<Token> {
             let tok = self.next_token();
             self.peek_state = tok.clone();
             return tok;
@@ -384,6 +399,4 @@ pub mod lexer {
         vec![$(Pattern::Str(($x.to_owned(), $t))),+]
     }
     }
-
-
 }

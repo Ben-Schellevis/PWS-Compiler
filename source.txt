@@ -1,10 +1,2 @@
-func print(x:int):void end
-
-func mult(x:int y:int):int
-    return (x * y) 
-end
-
-let x:int = 1;
-let b:int = 4;
-
-((x) (b) -> mult) -> print;
+let x: int = 1;
+x -> print;

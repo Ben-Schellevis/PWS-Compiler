@@ -56,7 +56,7 @@ pub mod ast {
     struct FunctionArgs {
         func_name: String,
         args: Vec<VarType>,
-        returns: Vec<VarType>
+        returns: Vec<VarType>,
     }
 
     #[derive(Debug, Clone)]
@@ -68,7 +68,6 @@ pub mod ast {
     }
 
     impl Block {
-
         fn get_variable<'a>(
             &'a self,
             name: String,
@@ -106,8 +105,12 @@ pub mod ast {
         fn add_variable(&mut self, name: String, type_: VarType) {
             self.variables.push(Variable { name, type_ });
         }
-        fn add_function(&mut self, func_name: String, args: Vec<VarType>, returns:  Vec<VarType>) {
-            self.funcs.push(FunctionArgs { func_name, args, returns});
+        fn add_function(&mut self, func_name: String, args: Vec<VarType>, returns: Vec<VarType>) {
+            self.funcs.push(FunctionArgs {
+                func_name,
+                args,
+                returns,
+            });
         }
     }
 
@@ -124,35 +127,50 @@ pub mod ast {
                     if left == VarType::Number && right == VarType::Number {
                         return Ok(VarType::Number);
                     } else {
-                        Err(Errors::WrongType(right, self.type_.clone()))
+                        Err(Errors::WrongType(
+                            vec![left, right],
+                            vec![VarType::Number, VarType::Number],
+                        ))
                     }
                 }
                 ">" | "<" => {
                     if left == VarType::Number && right == VarType::Number {
                         return Ok(VarType::Bool);
                     } else {
-                        Err(Errors::WrongType(right, self.type_.clone()))
+                        Err(Errors::WrongType(
+                            vec![left, right],
+                            vec![VarType::Number, VarType::Number],
+                        ))
                     }
                 }
                 "&" | "|" => {
                     if left == VarType::Bool && right == VarType::Bool {
                         return Ok(VarType::Bool);
                     } else {
-                        Err(Errors::WrongType(right, self.type_.clone()))
+                        Err(Errors::WrongType(
+                            vec![left, right],
+                            vec![VarType::Bool, VarType::Bool],
+                        ))
                     }
                 }
                 "=" => {
                     if left == right {
                         return Ok(right);
                     } else {
-                        Err(Errors::WrongType(right, self.type_.clone()))
+                        Err(Errors::WrongType(
+                            vec![left.clone(), right.clone()],
+                            vec![left.clone(), left.clone()],
+                        ))
                     }
                 }
                 "===" => {
                     if left == right {
                         return Ok(VarType::Bool);
                     } else {
-                        Err(Errors::WrongType(right, self.type_.clone()))
+                        Err(Errors::WrongType(
+                            vec![left.clone(), right.clone()],
+                            vec![left.clone(), left.clone()],
+                        ))
                     }
                 }
                 _ => Err(Errors::TokenTypeExpected(
@@ -186,29 +204,36 @@ pub mod ast {
     }
 
     impl FunctionOperator {
-        fn new(data: Vec<(AstNode, Vec<VarType>)>, func:FunctionArgs ) -> Result<(FunctionOperator, Vec<VarType>), Errors> {
+        fn new(
+            data: Vec<(AstNode, Vec<VarType>)>,
+            func: FunctionArgs,
+        ) -> Result<(FunctionOperator, Vec<VarType>), Errors> {
             let name = func.func_name;
             let args_check = func.args;
-            let (args_received, types) : (Vec<AstNode>, Vec<Vec<VarType>>) = data.iter().cloned().unzip();
+            let (args_received, types): (Vec<AstNode>, Vec<Vec<VarType>>) =
+                data.iter().cloned().unzip();
             let received_arg_count: usize = types.iter().map(Vec::len).sum();
             if args_check.len() != received_arg_count {
-                return Err(Errors::ArgCount(args_check.len(), received_arg_count));
+                return Err(Errors::ArgCount(received_arg_count, args_check.len()));
             }
 
             let mut index_of_check = 0;
             for (index, _) in args_received.iter().enumerate() {
                 let args_at_index = types[index].clone();
-                for type_ in args_at_index {
+                for type_ in args_at_index.clone() {
                     if args_check[index_of_check] != type_ {
-                        return Err(Errors::WrongType(args_check[index_of_check].clone(), format!("{:#?}", type_)));
+                        return Err(Errors::WrongType(args_check.clone(), args_at_index.clone()));
                     }
                     index_of_check += 1;
                 }
             }
-            Ok((FunctionOperator{
-                args: args_received,
-                name,
-            },func.returns))
+            Ok((
+                FunctionOperator {
+                    args: args_received,
+                    name,
+                },
+                func.returns,
+            ))
         }
     }
 
@@ -282,7 +307,7 @@ pub mod ast {
     enum Errors {
         TokenExpected(String, String),
         TokenTypeExpected(TokenType, String),
-        WrongType(VarType, String),
+        WrongType(Vec<VarType>, Vec<VarType>),
         ArgCount(usize, usize),
     }
 
@@ -296,12 +321,11 @@ pub mod ast {
                     write!(f, "Expected an {:#?} got {:#?}", type_, recieved)
                 }
                 Errors::WrongType(expected, recieved) => {
-                    write!(f, "{} is not of type {:#?}", recieved, expected)
+                    write!(f, "{:#?} is not of type {:#?}", recieved, expected)
                 }
-                Errors::ArgCount(expected, recieved) =>{
+                Errors::ArgCount(expected, recieved) => {
                     write!(f, "Expected {} arguments got {}", recieved, expected)
-                },
-                
+                }
             }
         }
     }
@@ -319,7 +343,11 @@ pub mod ast {
                     data: vec![],
                     variables: vec![],
                     parent: None,
-                    funcs: vec![],
+                    funcs: vec![FunctionArgs {
+                        func_name: "return".to_owned(),
+                        args: vec![],
+                        returns: vec![],
+                    }, FunctionArgs{ func_name: "print".to_owned(), args: vec![], returns: vec![] }],
                 }],
             }
         }
@@ -328,7 +356,6 @@ pub mod ast {
             let done = self.parse_block(0 as usize, None);
             match done {
                 Ok(ast) => {
-                    println!("{:#?}", self.program[ast]);
                     println!("{:#?}", self.program)
                 }
                 Err(err) => {
@@ -344,7 +371,7 @@ pub mod ast {
                 "bool" => VarType::Bool,
                 "string" => VarType::Text,
                 "void" => VarType::Void,
-                _ => todo!(),
+                _ => panic!("{}", name),
             }
         }
 
@@ -355,14 +382,18 @@ pub mod ast {
                 .ok_or(Errors::TokenTypeExpected(type_, "Nothing".to_owned()))?;
 
             if !(token.type_ == type_) {
-                return Err(Errors::TokenTypeExpected(type_, token.data));
+                return Err(Errors::TokenTypeExpected(
+                    type_,
+                    format!("{:#?}", token.type_),
+                ));
             } else {
                 self.lex.next_token();
                 return Ok(token);
             }
         }
 
-        fn expect_exact_token(&mut self, data: String) -> Result<Token, Errors> {
+        fn expect_exact_token<T: ToString>(&mut self, data: T) -> Result<Token, Errors> {
+            let data = data.to_string();
             let token = self
                 .lex
                 .peek_next_token()
@@ -394,6 +425,7 @@ pub mod ast {
             &mut self,
             toks: Vec<Token>,
             scope: usize,
+            top_call: bool,
         ) -> Result<(AstNode, Vec<VarType>), Errors> {
             let mut tokens = toks.clone().into_iter().enumerate();
 
@@ -477,13 +509,6 @@ pub mod ast {
                 //the function name
                 let name = toks[op + 1].clone();
 
-                let func_var = self.program[scope]
-                    .get_func(name.data.clone(), &self.program)
-                    .ok_or(Errors::TokenExpected(
-                        name.data.clone(),
-                        "not valid func".to_owned(),
-                    ))?.clone();
-
                 let mut args = vec![];
                 let mut index = 0;
                 while index < op {
@@ -516,23 +541,48 @@ pub mod ast {
                     }
                     exp.remove(0);
                     exp.pop(); // remove the trailing ")"
-                    let arg = self.parse_exp(exp, scope)?;
+                    let arg = self.parse_exp(exp, scope, false)?;
                     args.push(arg);
+                }
+
+                let func_var;
+                if name.data == "return" {
+                    let mut inputs = vec![];
+                    for (_, args) in &args {
+                        for arg in args {
+                            inputs.push(arg.clone())
+                        }
+                    }
+                    func_var = FunctionArgs {
+                        func_name: "return".to_owned(),
+                        args: inputs.clone(),
+                        returns: inputs.clone(),
+                    }
+                } else {
+                    func_var = self.program[scope]
+                        .get_func(name.data.clone(), &self.program)
+                        .ok_or(Errors::TokenExpected(
+                            name.data.clone(),
+                            "not valid func".to_owned(),
+                        ))?
+                        .clone();
                 }
 
                 let op_node = FunctionOperator::new(args, func_var)?;
                 let node = AstNode::FunctionOperator(op_node.0);
                 return Ok((node, op_node.1));
             } else {
-                let left = self.parse_exp(toks[least_brackets as usize..op].to_vec(), scope)?;
+                let left =
+                    self.parse_exp(toks[least_brackets as usize..op].to_vec(), scope, false)?;
                 let right = self.parse_exp(
                     toks[op + 1..toks.len() - least_brackets as usize].to_vec(),
                     scope,
+                    false,
                 )?;
                 if left.1.len() > 1 || right.1.len() > 1 {
                     return Err(Errors::ArgCount(1, left.1.len()));
                 }
-                
+
                 let left = (left.0, left.1[0].clone());
                 let right = (right.0, right.1[0].clone());
 
@@ -542,7 +592,11 @@ pub mod ast {
             }
         }
 
-        fn parse_keyword(&mut self, tok: String, scope: usize) -> Result<AstNode, Errors> {
+        fn parse_keyword(
+            &mut self,
+            tok: String,
+            scope: usize,
+        ) -> Result<(AstNode, Option<(Vec<VarType>, bool)>), Errors> {
             match tok.as_str() {
                 "if" => {
                     let mut next_token = self.lex.next_token().expect("exepected do");
@@ -551,15 +605,18 @@ pub mod ast {
                         logical_nodes.push(next_token);
                         next_token = self.lex.next_token().expect("exepected do");
                     }
-                    let logical_exp = self.parse_exp(logical_nodes, scope)?.0;
+                    let logical_exp = self.parse_exp(logical_nodes, scope, false)?;
+                    if logical_exp.1.len() == 0 || logical_exp.1[0] != VarType::Bool {
+                        return Err(Errors::WrongType(vec![VarType::Bool], logical_exp.1));
+                    }
                     let block = self.parse_block(scope, None)?;
-                    Ok(AstNode::If(
-                        Box::new(logical_exp),
-                        Box::new(AstNode::Block(block)),
+                    Ok((
+                        AstNode::If(Box::new(logical_exp.0), Box::new(AstNode::Block(block.0))),
+                        Some((block.1, block.2)),
                     ))
                 }
                 "let" => {
-                    let ident = self.expect_token_type(TokenType::Identifier).unwrap();
+                    let ident = self.expect_token_type(TokenType::Identifier)?;
 
                     self.expect_exact_token(":".to_owned())?;
 
@@ -577,14 +634,13 @@ pub mod ast {
                     }
 
                     let exp = self.collect_until(";");
-                    let exp = self.parse_exp(exp, scope)?;
+                    let exp = self.parse_exp(exp, scope, false)?;
 
                     if exp.1.len() > 1 {
                         return Err(Errors::ArgCount(1, exp.1.len()));
                     }
-                    
-                    let exp = (exp.0, exp.1[0].clone());
 
+                    let exp = (exp.0, exp.1[0].clone());
 
                     let left = AstNode::Identifier(Variable {
                         name: ident.data,
@@ -592,7 +648,7 @@ pub mod ast {
                     });
                     let op_node = BinaryOperator::new((left, type_), exp, "=".to_owned())?;
 
-                    Ok(AstNode::BinaryOperator(op_node.0))
+                    Ok((AstNode::BinaryOperator(op_node.0), None))
                 }
                 "func" => {
                     let function_name = self.expect_token_type(TokenType::Identifier)?;
@@ -610,8 +666,6 @@ pub mod ast {
                         token = self.expect_token_type(TokenType::Identifier);
                     }
 
-
-                    
                     self.expect_exact_token(")".to_owned())?;
                     self.expect_exact_token(":".to_owned())?;
 
@@ -619,18 +673,17 @@ pub mod ast {
                     let mut type_token = self.expect_token_type(TokenType::Identifier);
                     while let Ok(ref arg) = type_token {
                         let type_ = Tree::<'a>::parse_type(arg.data.clone());
-                        returns.push(type_);
+                        if type_ != VarType::Void {
+                            returns.push(type_);
+                        }
 
                         type_token = self.expect_token_type(TokenType::Identifier);
                     }
 
-
-
-
                     self.program[scope].add_function(
                         function_name.data.clone(),
                         function_args.iter().map(|f| f.1.clone()).collect(),
-                        returns
+                        returns.clone(),
                     );
 
                     let mut funcblock = Block {
@@ -645,18 +698,32 @@ pub mod ast {
                     }
 
                     let inner_code = self.parse_block(scope, Some(funcblock))?;
-                    Ok(AstNode::Function(Function {
-                        name: function_name.data,
-                        inner_block: inner_code,
-                    }))
-                },
+                    if returns != inner_code.1 {
+                        return Err(Errors::WrongType(returns.clone(), inner_code.1));
+                    }
+                    Ok((
+                        AstNode::Function(Function {
+                            name: function_name.data,
+                            inner_block: inner_code.0,
+                        }),
+                        None,
+                    ))
+                }
+
                 _ => panic!("Unknown keyword"),
             }
         }
 
         //after we find a do or at the start of the program
-        fn parse_block(&mut self, scope: usize, block: Option<Block>) -> Result<usize, Errors> {
+        fn parse_block(
+            &mut self,
+            scope: usize,
+            block: Option<Block>,
+        ) -> Result<(usize, Vec<VarType>, bool), Errors> {
             let scope = scope;
+            let mut returns = vec![];
+            let mut return_check = vec![];
+            let mut return_called = false;
             let start = block.unwrap_or(Block {
                 data: vec![],
                 variables: vec![],
@@ -671,38 +738,72 @@ pub mod ast {
                 match token.type_ {
                     TokenType::Keyword => {
                         if token.data == "end" {
-                            return Ok(innerscope);
+                            if return_check != returns
+                                && (returns.len() > 0 && return_check.len() > 0)
+                            {
+                                return Err(Errors::WrongType(return_check, returns));
+                            }
+                            return Ok((innerscope, returns, return_called));
                         }
                         if token.data == "do" {
                             let new_node = self.parse_block(innerscope, None)?;
-                            self.program[innerscope].data.push(AstNode::Block(new_node));
+                            if returns.len() == 0 {
+                                returns = new_node.1;
+                            } else if returns != new_node.1 {
+                                return Err(Errors::WrongType(returns.clone(), new_node.1));
+                            }
+                            self.program[innerscope]
+                                .data
+                                .push(AstNode::Block(new_node.0));
                         } else {
                             let new_node = self.parse_keyword(token.data, innerscope)?;
-                            self.program[innerscope].data.push(new_node);
+                            if let Some(n) = new_node.1 {
+                                if returns.len() == 0 {
+                                    if n.1 {
+                                        returns = n.0;
+                                    } else if return_check.len() == 0 {
+                                        return_check = n.0;
+                                    } else if return_check != n.0 {
+                                        return Err(Errors::WrongType(returns.clone(), n.0));
+                                    }
+                                } else if returns != n.0 {
+                                    return Err(Errors::WrongType(returns.clone(), n.0));
+                                }
+                            }
+                            self.program[innerscope].data.push(new_node.0);
                         }
                     }
                     TokenType::Identifier => {
                         let mut exp = self.collect_until(";");
                         exp.insert(0, token);
-                        let call = self.parse_exp(exp, innerscope)?.0;
+                        let call = self.parse_exp(exp, innerscope, true)?.0;
                         self.program[innerscope].data.push(call);
                     }
                     TokenType::Literal(_) => todo!(),
                     TokenType::Operator => {
-                        panic!();
+                        return Err(Errors::TokenExpected(
+                            "A statement".to_owned(),
+                            token.data.clone(),
+                        ));
                     }
                     TokenType::Deliminator => {
                         let mut exp = self.collect_until(";");
                         exp.insert(0, token);
-                        let call = self.parse_exp(exp, innerscope)?.0;
-                        self.program[innerscope].data.push(call);
-                    },
+                        let call = self.parse_exp(exp, innerscope, true)?;
+                        if call.1.len() != 0 {
+                            if returns.len() == 0 {
+                                returns = call.1;
+                            } else if returns != call.1 {
+                                return Err(Errors::WrongType(returns.clone(), call.1));
+                            }
+                            return_called = true;
+                        }
+
+                        self.program[innerscope].data.push(call.0);
+                    }
                     TokenType::Unkown => todo!(),
                 }
             }
         }
     }
 }
-
-
-

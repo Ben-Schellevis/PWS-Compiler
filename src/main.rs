@@ -1,13 +1,15 @@
 #[macro_use]
 mod lexer;
 mod ast;
+mod elf;
 
 
 use std::fs;
 
-pub use crate::ast::ast::{Tree};
+pub use crate::ast::ast::Tree;
 
-pub use crate::lexer::{lexer::Lexer, lexer::TokenType, lexer::Node, lexer::Token, lexer::Pattern, lexer::Literal};
+pub use crate::elf::elf::Elf;
+pub use crate::lexer::lexer::{Lexer, TokenType, Node, Token, Pattern, Literal};
 fn main() {
     let raw_text = fs::read_to_string("/mnt/c/programming/files/rust/PWS-Compiler/source.txt")
         .expect("Should have been able to read the file") +  "end";
@@ -17,6 +19,7 @@ fn main() {
     let mut strings = vec![
         pat!("\"", false, "abcdefghijklmnopqrstuvwxyz1234567890", true, "\"", false, type: TokenType::Literal(Literal::String)),
         pat!("1234567890", true, type: TokenType::Literal(Literal::Number)),
+
         Pattern::Str(("true".to_owned(), TokenType::Literal(Literal::Bool))),
         Pattern::Str(("false".to_owned(), TokenType::Literal(Literal::Bool))),
 
@@ -35,16 +38,21 @@ fn main() {
         "let",
         "do",
         "if",
-        "end",
         "func",
-        "return",
+        "end",
         type: TokenType::Keyword
     ));
+
+    strings.push(
+        Pattern::Str(("false".to_owned(), TokenType::Literal(Literal::Bool))),
+    );
 
     let lex = Lexer::new(raw_text.chars(), strings, &mut node);
 
     let mut ast = Tree::new(lex);
-    ast.build();
+    let elf = Elf::new();
+    elf.write();
+    //ast.build();
 }
 
 

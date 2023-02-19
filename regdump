@@ -1,0 +1,46 @@
+ConvertToDecimal:
+    push rdi               
+    sub rsp, 16            
+    mov rdi, rsp            
+    mov rcx, 10             
+                            
+
+    dec rdi
+    mov byte ptr [rdi], 0  
+
+    cmp rax, 0             
+    ja l1                  
+
+    dec rdi
+    mov byte ptr [rdi], '0' 
+    jmp l2
+
+
+l1: xor rdx, rdx            
+    div rcx                 
+                            
+
+    add rdx, '0'            
+
+    dec rdi
+    mov byte ptr [rdi], dl 
+
+    cmp rax, 0
+    ja l1                        
+
+
+l2: mov al, byte ptr [rdi]  
+    inc rdi
+    mov byte ptr [rbx], al  
+    inc rbx
+
+    cmp al, 0               
+    jnz l2
+
+    mov rax, rbx           
+    dec rax                
+
+    add rsp, 16           
+    pop rdi                
+
+    ret              

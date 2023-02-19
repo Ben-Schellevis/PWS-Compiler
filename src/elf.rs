@@ -1,6 +1,8 @@
 pub mod elf {
-    use std::{collections::HashMap, fs, hash::Hash, ops::Add as NumAdd};
-    #[derive(PartialEq, Clone, Copy)]
+    use std::{
+        collections::HashMap, fmt::Debug, fs, hash::Hash, num::NonZeroI8, ops::Add as NumAdd,
+    };
+    #[derive(PartialEq, Clone, Copy, Debug)]
     enum Bitness {
         _32,
         _64,
@@ -95,7 +97,7 @@ pub mod elf {
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     enum Registers {
         Ax,
         Cx,
@@ -115,12 +117,16 @@ pub mod elf {
         _15,
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     struct Register {
         data: Registers,
         bits: Bitness,
     }
     impl Register {
+        fn mode(&self) -> u8 {
+            0b11
+        }
+
         fn index(&self) -> u8 {
             match self.data {
                 Registers::Ax => 0b0000,
@@ -143,6 +149,7 @@ pub mod elf {
         }
     }
 
+    #[derive(Clone, Debug)]
     struct Immediate {
         data: u64,
         size: Bitness,
@@ -191,6 +198,30 @@ pub mod elf {
             res
         }
     }
+    #[derive(Clone, Debug)]
+    struct EncodeArgs<'a> {
+        opcode: Vec<u8>,
+        digit: Option<u8>,
+        isr: bool,
+        plusreg: bool,
+        operhandsize: Option<Bitness>,
+        left: Option<&'a dyn Operhand>,
+        right: Option<&'a dyn Operhand>,
+    }
+
+    impl Default for EncodeArgs<'_> {
+        fn default() -> Self {
+            EncodeArgs {
+                opcode: vec![0x90],
+                digit: None,
+                isr: false,
+                plusreg: false,
+                operhandsize: None,
+                left: None,
+                right: None,
+            }
+        }
+    }
 
     struct Mov {
         left: Register,
@@ -199,18 +230,26 @@ pub mod elf {
 
     impl Instruction for Mov {
         fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
-            let mut bytes = asm.parse_two_operhands(&self.left, self.right.as_ref(), None);
-            let mut opcode = 0x8B;
-            if let Some(_) = self.right.immediate() {
-                let index = self.left.index();
-                opcode = 0xB8 + index;
-            } else if let Some(_) = self.right.label() {
-                let index = self.left.index();
-                opcode = 0xB8 + index;
-            }
-            bytes.0.push(ByteOrLabel::Byte(opcode));
-            bytes.0.extend(bytes.1);
-            bytes.0
+            let imm = self.right.immediate().is_some();
+            let label = self.right.label().is_some();
+            let opcode: u8 = if imm || label { 0xB8 } else { 0x8B };
+            let operhandsize = if imm {
+                Some(self.right.immediate().unwrap().size)
+            } else if label {
+                Some(Bitness::_64)
+            } else {
+                None
+            };
+            let bytes = Assembly::encode_instructon(EncodeArgs {
+                opcode: vec![opcode],
+                isr: !(imm || label),
+                plusreg: imm || label,
+                operhandsize,
+                left: Some(&self.left),
+                right: Some(self.right.as_ref()),
+                ..Default::default()
+            });
+            bytes
         }
     }
 
@@ -244,18 +283,18 @@ pub mod elf {
     }
 
     struct Jump {
-        right: Box<dyn Operhand>,
+        left: Box<dyn Operhand>,
     }
 
     impl Instruction for Jump {
         fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
             let mut res = vec![ByteOrLabel::Byte(0xE9)];
-            if let Some(imm) = self.right.immediate() {
+            if let Some(imm) = self.left.immediate() {
                 let bytes = imm.to_bytes();
                 for byte in bytes {
                     res.push(ByteOrLabel::Byte(byte));
                 }
-            } else if let Some(label) = self.right.label() {
+            } else if let Some(label) = self.left.label() {
                 let new_label = Label {
                     name: label.name.clone(),
                     offset: true,
@@ -263,6 +302,31 @@ pub mod elf {
                 };
                 res.push(ByteOrLabel::Label(new_label));
             }
+            //res
+            //let mut new_left = self.left.as_ref();
+            let res;
+            if let Some(label) = self.left.label() {
+                let new_label = Label {
+                    name: label.name.clone(),
+                    offset: true,
+                    size: 4,
+                };
+
+                res = Assembly::encode_instructon(EncodeArgs {
+                    opcode: vec![0xE9],
+                    operhandsize: Some(Bitness::_32),
+                    left: Some(new_label.build().as_ref()),
+                    ..Default::default()
+                });
+            }else{
+                res = Assembly::encode_instructon(EncodeArgs {
+                    opcode: vec![0xE9],
+                    operhandsize: Some(Bitness::_32),
+                    left: Some(self.left.as_ref()),
+                    ..Default::default()
+                });
+            }
+
             res
         }
     }
@@ -274,17 +338,24 @@ pub mod elf {
 
     impl Instruction for Add {
         fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
-            let mut opcode = ByteOrLabel::Byte(0x03);
-
-            let mut bytes = asm.parse_two_operhands(&self.left, self.right.as_ref(), Some(0));
-            let mut res = vec![];
-            if let Some(_) = self.right.immediate() {
-                opcode = ByteOrLabel::Byte(0x81);
-            }
-            res.extend(bytes.0);
-            res.push(opcode);
-            res.extend(bytes.1);
-            res
+            let imm = self.right.immediate().is_some();
+            let opcode = if imm { vec![0x81] } else { vec![0x03] };
+            let digit = if imm { Some(0) } else { None };
+            let operhandsize = if imm {
+                Some(self.right.immediate().unwrap().size)
+            } else {
+                None
+            };
+            let bytes = Assembly::encode_instructon(EncodeArgs {
+                opcode,
+                digit,
+                operhandsize,
+                isr: !imm,
+                left: Some(&self.left),
+                right: Some(self.right.as_ref()),
+                ..Default::default()
+            });
+            bytes
         }
     }
 
@@ -295,30 +366,73 @@ pub mod elf {
 
     impl Instruction for Sub {
         fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
-            let mut opcode = ByteOrLabel::Byte(0x29);
-
-            let mut bytes = asm.parse_two_operhands(&self.left, self.right.as_ref(), Some(5));
-            let mut res = vec![];
-            if let Some(_) = self.right.immediate() {
-                opcode = ByteOrLabel::Byte(0x81);
-            }
-            res.extend(bytes.0);
-            res.push(opcode);
-            res.extend(bytes.1);
-            res
+            let imm = self.right.immediate().is_some();
+            let opcode = if imm { vec![0x81] } else { vec![0x2B] };
+            let digit = if imm { Some(5) } else { None };
+            let operhandsize = if imm {
+                Some(self.right.immediate().unwrap().size)
+            } else {
+                None
+            };
+            let bytes = Assembly::encode_instructon(EncodeArgs {
+                opcode,
+                digit,
+                operhandsize,
+                isr: !imm,
+                left: Some(&self.left),
+                right: Some(self.right.as_ref()),
+                ..Default::default()
+            });
+            bytes
         }
     }
 
+    struct Cmp {
+        left: Register,
+        right: Box<dyn Operhand>,
+    }
+
+    impl Instruction for Cmp {
+        fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
+            let imm = self.right.immediate().is_some();
+            let opcode = if imm { vec![0x81] } else { vec![0x39] };
+            let digit = if imm { Some(7) } else { None };
+            let operhandsize = if imm {
+                Some(self.right.immediate().unwrap().size)
+            } else {
+                None
+            };
+            let bytes = Assembly::encode_instructon(EncodeArgs {
+                opcode,
+                digit,
+                operhandsize,
+                isr: !imm,
+                left: Some(&self.left),
+                right: Some(self.right.as_ref()),
+                ..Default::default()
+            });
+            bytes
+        }
+    }
     struct Mult {
         left: Register,
+        right: Register,
     }
-    // impl Instruction for Mult {
-    //     fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
+    impl Instruction for Mult {
+        fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
+            let opcode = vec![0x0f, 0xAF];
+            let bytes = Assembly::encode_instructon(EncodeArgs {
+                opcode,
+                isr: true,
+                left: Some(&self.left),
+                right: Some(&self.right),
+                ..Default::default()
+            });
+            bytes
+        }
+    }
 
-    //     }
-    // }
-
-    trait Operhand {
+    trait Operhand: Debug {
         fn rex_64(&self) -> bool {
             return false;
         }
@@ -336,6 +450,7 @@ pub mod elf {
         }
     }
 
+
     impl Operhand for Register {
         fn rex_64(&self) -> bool {
             return self.bits == Bitness::_64;
@@ -345,13 +460,15 @@ pub mod elf {
         }
     }
 
+    impl<T: Operhand> Operhand for &T{}
+
     impl Operhand for Immediate {
         fn immediate(&self) -> Option<&Immediate> {
             Some(self)
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     struct Label {
         name: String,
         offset: bool,
@@ -382,7 +499,7 @@ pub mod elf {
             Some(self)
         }
     }
-
+    #[derive(Debug, Clone)]
     enum ByteOrLabel {
         Byte(u8),
         Label(Label),
@@ -475,20 +592,136 @@ pub mod elf {
             res
         }
 
-        fn encode_instructon(
-            &mut self,
-            opcode: u8,
-            digit: Option<u8>,
-            isr: bool,
-            offset: bool,
-            plusreg: bool,
-            left: Option<&dyn Operhand>,
-            right: Option<&dyn Operhand>,
-        ) -> Vec<u8>
-        {
+        fn encode_instructon(args: EncodeArgs) -> Vec<ByteOrLabel> {
+            dbg!(args.clone());
+            let mut opcode = args.opcode;
+            let digit = args.digit;
+            let isr = args.isr;
+            let plusreg = args.plusreg;
+            let operhandsize = args.operhandsize;
+            let left = args.left;
+            let right = args.right;
 
-            
-            let res = vec![];
+            let mut modrm: Option<u8> = None;
+            let mut rex: Option<u8> = None;
+
+            let mut operhands = vec![];
+            if let Some(digit) = digit {
+                modrm = Some(digit << 3);
+                if let Some(reg) = left {
+                    if let Some(reg) = reg.register() {
+                        let mut index = reg.index();
+                        let mut regsize = reg.rex_64();
+                        modrm = Some(modrm.unwrap() + (reg.mode() << 6) + index);
+                        if let Some(size) = operhandsize {
+                            regsize = size == Bitness::_64;
+                            let imm_or_label = right.expect("execpeted right side");
+
+                            if let Some(imm) = imm_or_label.immediate() {
+                                let bytes = imm.to_bytes();
+                                let mut as_bytes = vec![];
+                                for byte in bytes {
+                                    as_bytes.push(ByteOrLabel::Byte(byte))
+                                }
+                                operhands.extend(as_bytes);
+                            } else if let Some(label) = imm_or_label.label() {
+                                operhands.push(ByteOrLabel::Label(label.clone()));
+                            } else {
+                                panic!();
+                            }
+                        }
+                        if regsize || index > 0b111 {
+                            rex = Some((0b0100 << 4) + (index >> 3) + ((regsize as u8) << 3));
+                            index = index & 0b0111;
+                        }
+                    } else {
+                        panic!("no register but digit was given")
+                    }
+                } else {
+                    panic!("no operhand but digit was given")
+                }
+            }
+            else if isr {
+                let left = left.unwrap().register().unwrap();
+                let mut leftindex = left.index();
+
+                let right = right.unwrap().register().unwrap();
+                let mut rightindex = right.index();
+                let size = left.rex_64() | right.rex_64();
+                let mode = right.mode();
+
+                if size || (leftindex > 0b111) || (rightindex > 0b111) {
+                    rex = Some(
+                        (0b0100 << 4)
+                            + ((size as u8) << 3)
+                            + ((leftindex >> 3) << 2)
+                            + (rightindex >> 3),
+                    );
+                    leftindex = leftindex & 0b0111;
+                    rightindex = rightindex & 0b0111;
+                }
+
+                modrm = Some((mode << 6) + (leftindex << 3) + rightindex);
+            }
+            else if plusreg {
+                if let Some(reg) = left {
+                    if let Some(reg) = reg.register() {
+                        let mut index = reg.index();
+                        let len = opcode.len();
+                        let mut regsize = reg.rex_64();
+                        if let Some(size) = operhandsize {
+                            regsize = size == Bitness::_64;
+                            let imm_or_label = right.expect("execpeted right side");
+
+                            if let Some(imm) = imm_or_label.immediate() {
+                                let bytes = imm.to_bytes();
+                                let mut as_bytes = vec![];
+                                for byte in bytes {
+                                    as_bytes.push(ByteOrLabel::Byte(byte))
+                                }
+                                operhands.extend(as_bytes);
+                            } else if let Some(label) = imm_or_label.label() {
+                                operhands.push(ByteOrLabel::Label(label.clone()));
+                            } else {
+                                panic!();
+                            }
+                        }
+                        if regsize || index > 0b111 {
+                            rex = Some((0b0100 << 4) + (index >> 3) + ((regsize as u8) << 3));
+                            index = index & 0b0111;
+                        }
+                        opcode[len - 1] += index;
+                    } else {
+                        panic!("no register but digit was given")
+                    }
+                } else {
+                    panic!("no left but plusreg was true")
+                }
+            }
+            else if let Some(_) = operhandsize {
+                let left = left.unwrap(); 
+                if let Some(label) =left.label(){
+                    operhands.push(ByteOrLabel::Label(label.clone()));
+                }else if let Some(imm) = left.immediate(){
+                    for byte in imm.to_bytes() {
+                        operhands.push(ByteOrLabel::Byte(byte));
+                    }
+                }
+            }
+
+            let mut res = vec![];
+            if let Some(rex) = rex {
+                res.push(ByteOrLabel::Byte(rex));
+            }
+            for byte in opcode {
+                res.push(ByteOrLabel::Byte(byte));
+            }
+
+            if let Some(modrm) = modrm {
+                res.push(ByteOrLabel::Byte(modrm));
+            }
+            dbg!(operhands.clone());
+            res.extend(operhands);
             res
         }
 
@@ -561,7 +794,29 @@ pub mod elf {
             self.instructions.push(Box::new(sub));
         }
 
-        fn mult<T: Into<Register>>(&mut self, left: T) {}
+        fn cmp<T, U>(&mut self, left: T, right: U)
+        where
+            T: Into<Register>,
+            U: IntoOperhand + 'static,
+        {
+            let sub = Cmp {
+                left: left.into(),
+                right: right.build(),
+            };
+            self.instructions.push(Box::new(sub));
+        }
+
+        fn mult<T, U>(&mut self, left: T, right: U)
+        where
+            T: Into<Register>,
+            U: Into<Register>,
+        {
+            let mult = Mult {
+                left: left.into(),
+                right: right.into(),
+            };
+            self.instructions.push(Box::new(mult));
+        }
 
         fn call(&mut self, op1: Box<dyn IntoOperhand>) -> usize {
             let operhand = op1.build();
@@ -578,7 +833,7 @@ pub mod elf {
             if let Some(_) = operhand.immediate() {
                 panic!("cant call on immediant value");
             }
-            let call = Jump { right: operhand };
+            let call = Jump { left: operhand };
             self.instructions.push(Box::new(call));
             self.instructions.len() - 1
         }
@@ -797,20 +1052,25 @@ pub mod elf {
 
             let data = asm.add_data("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", "data");
             let regdump = Label::new("regdump");
+            let exit = Label::new("exit");
             asm.mov("rbx", data.clone());
-            asm.mov("rax", 0);
-            asm.sub("rax", 2);
+            asm.mov("rax", 10);
+            asm.mov("rdx", 10);
+            asm.cmp("rax", "rdx");
+            asm.jump(Box::new(exit));
             asm.call(Box::new(regdump));
 
             asm.syscall(1, vec![Box::new(1), Box::new(data), Box::new(16 as u64)]);
 
+
+            asm.label("exit");
             asm.syscall(60, vec![Box::new(0)]);
 
             let regdump = "64574883EC104889E748C7C10A00000048FFCFC607004883F800770848FFCFC60730EB154831D248F7F14883C23048FFCF88174883F80077EB8A0748FFC7880348FFC33C0075F24889D848FFC84883C4105FC3";
 
             asm.label("regdump");
             asm.raw_bytes(decode_hex(regdump).unwrap());
-
+            //asm.mov("rdx", 10);
             let code = asm.assemble();
 
             let lenght = code.len() as u64;

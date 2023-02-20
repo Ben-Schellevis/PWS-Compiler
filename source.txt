@@ -1,2 +1,1 @@
-let x:str = "hallo opa"
-x -> print;
+((15) -> tostring) -> print;

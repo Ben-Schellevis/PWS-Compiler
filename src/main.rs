@@ -49,10 +49,10 @@ fn main() {
 
     let lex = Lexer::new(raw_text.chars(), strings, &mut node);
 
-    let mut ast = Tree::new(lex);
-    let elf = Elf::new();
+    let ast = Tree::new(lex);
+    let x= ast.build();
+    let elf = Elf::new(x);
     elf.write();
-    //ast.build();
 }
 
 

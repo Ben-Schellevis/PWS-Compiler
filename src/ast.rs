@@ -1,10 +1,10 @@
 pub mod ast {
-    use std::{clone, error::Error, fmt, ops::Index, process, vec};
+    use std::{error::Error, fmt, string, vec};
 
     use crate::lexer::lexer::{Lexer, Literal as TokenLiteral, Token, TokenType};
 
     #[derive(Debug, Clone, PartialEq)]
-    enum VarType {
+    pub enum VarType {
         Number,
         Text,
         Bool,
@@ -14,9 +14,9 @@ pub mod ast {
     }
 
     #[derive(Debug, Clone)]
-    struct Literal {
-        type_: VarType,
-        data: String,
+    pub struct Literal {
+        pub type_: VarType,
+        pub data: String,
     }
     impl Literal {
         fn try_new(tok: TokenLiteral, data: String) -> (Literal, VarType) {
@@ -47,28 +47,29 @@ pub mod ast {
     }
 
     #[derive(Debug, Clone)]
-    struct Variable {
-        name: String,
-        type_: VarType,
+    pub struct Variable {
+        pub name: String,
+        pub type_: VarType,
+        pub arg: bool,
     }
 
     #[derive(Debug, Clone)]
-    struct FunctionArgs {
-        func_name: String,
-        args: Vec<VarType>,
-        returns: Vec<VarType>,
+    pub struct FunctionArgs {
+        pub func_name: String,
+        pub args: Vec<VarType>,
+        pub returns: Vec<VarType>,
     }
 
     #[derive(Debug, Clone)]
-    struct Block {
-        data: Vec<AstNode>,
-        variables: Vec<Variable>,
-        funcs: Vec<FunctionArgs>,
-        parent: Option<usize>,
+    pub struct Block {
+        pub data: Vec<AstNode>,
+        pub variables: Vec<Variable>,
+        pub funcs: Vec<FunctionArgs>,
+        pub parent: Option<usize>,
     }
 
     impl Block {
-        fn get_variable<'a>(
+        pub fn get_variable<'a>(
             &'a self,
             name: String,
             parents: &'a Vec<Block>,
@@ -85,7 +86,7 @@ pub mod ast {
             }
         }
 
-        fn get_func<'a>(
+        pub fn get_func<'a>(
             &'a self,
             name: String,
             parents: &'a Vec<Block>,
@@ -103,7 +104,11 @@ pub mod ast {
         }
 
         fn add_variable(&mut self, name: String, type_: VarType) {
-            self.variables.push(Variable { name, type_ });
+            self.variables.push(Variable {
+                name,
+                type_,
+                arg: false,
+            });
         }
         fn add_function(&mut self, func_name: String, args: Vec<VarType>, returns: Vec<VarType>) {
             self.funcs.push(FunctionArgs {
@@ -114,16 +119,41 @@ pub mod ast {
         }
     }
 
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Operators {
+        Eq,
+        Plus,
+        Minus,
+        Set,
+        Divide,
+        Mult,
+    }
+
+    impl Operators {
+        pub fn new(data: String) -> Operators {
+            match data.as_str() {
+                "===" => Operators::Eq,
+                "+" => Operators::Plus,
+                "-" => Operators::Minus,
+                "=" => Operators::Set,
+                "/" => Operators::Divide,
+                "*" => Operators::Mult,
+                _ => panic!("not a operator")
+            }
+
+        }
+    }
+
     #[derive(Debug, Clone)]
-    struct BinaryOperator {
-        left: Box<AstNode>,
-        right: Box<AstNode>,
-        type_: String,
+    pub struct BinaryOperator {
+        pub left: Box<AstNode>,
+        pub right: Box<AstNode>,
+        pub type_: Operators,
     }
     impl BinaryOperator {
         fn validate_type(&self, left: VarType, right: VarType) -> Result<VarType, Errors> {
-            match self.type_.as_str() {
-                "+" | "-" | "*" | "/" => {
+            match self.type_ {
+                Operators::Minus | Operators::Plus | Operators::Divide | Operators::Mult => {
                     if left == VarType::Number && right == VarType::Number {
                         return Ok(VarType::Number);
                     } else {
@@ -133,27 +163,18 @@ pub mod ast {
                         ))
                     }
                 }
-                ">" | "<" => {
-                    if left == VarType::Number && right == VarType::Number {
+
+                Operators::Eq => {
+                    if left == right {
                         return Ok(VarType::Bool);
                     } else {
                         Err(Errors::WrongType(
-                            vec![left, right],
-                            vec![VarType::Number, VarType::Number],
+                            vec![left.clone(), right.clone()],
+                            vec![left.clone(), left.clone()],
                         ))
                     }
                 }
-                "&" | "|" => {
-                    if left == VarType::Bool && right == VarType::Bool {
-                        return Ok(VarType::Bool);
-                    } else {
-                        Err(Errors::WrongType(
-                            vec![left, right],
-                            vec![VarType::Bool, VarType::Bool],
-                        ))
-                    }
-                }
-                "=" => {
+                Operators::Set => {
                     if left == right {
                         return Ok(right);
                     } else {
@@ -163,27 +184,13 @@ pub mod ast {
                         ))
                     }
                 }
-                "===" => {
-                    if left == right {
-                        return Ok(VarType::Bool);
-                    } else {
-                        Err(Errors::WrongType(
-                            vec![left.clone(), right.clone()],
-                            vec![left.clone(), left.clone()],
-                        ))
-                    }
-                }
-                _ => Err(Errors::TokenTypeExpected(
-                    TokenType::Operator,
-                    self.type_.clone(),
-                )),
             }
         }
 
         fn new(
             left: (AstNode, VarType),
             right: (AstNode, VarType),
-            op: String,
+            op: Operators,
         ) -> Result<(BinaryOperator, VarType), Errors> {
             let left_box = Box::new(left.0);
             let right_box = Box::new(right.0);
@@ -198,9 +205,9 @@ pub mod ast {
     }
 
     #[derive(Debug, Clone)]
-    struct FunctionOperator {
-        args: Vec<AstNode>,
-        name: String,
+    pub struct FunctionOperator {
+        pub args: Vec<AstNode>,
+        pub name: String,
     }
 
     impl FunctionOperator {
@@ -238,13 +245,13 @@ pub mod ast {
     }
 
     #[derive(Debug, Clone)]
-    struct Function {
-        name: String,
-        inner_block: usize,
+    pub struct Function {
+        pub name: String,
+        pub inner_block: usize,
     }
 
     #[derive(Debug, Clone)]
-    enum AstNode {
+    pub enum AstNode {
         Block(usize),
         Function(Function),
         If(Box<AstNode>, Box<AstNode>),
@@ -343,20 +350,33 @@ pub mod ast {
                     data: vec![],
                     variables: vec![],
                     parent: None,
-                    funcs: vec![FunctionArgs {
-                        func_name: "return".to_owned(),
-                        args: vec![],
-                        returns: vec![],
-                    }, FunctionArgs{ func_name: "print".to_owned(), args: vec![], returns: vec![] }],
+                    funcs: vec![
+                        FunctionArgs {
+                            func_name: "return".to_owned(),
+                            args: vec![],
+                            returns: vec![],
+                        },
+                        FunctionArgs {
+                            func_name: "print".to_owned(),
+                            args: vec![VarType::Text],
+                            returns: vec![],
+                        },
+                        FunctionArgs {
+                            func_name: "tostring".to_owned(),
+                            args: vec![VarType::Number],
+                            returns: vec![VarType::Text],
+                        },
+                    ],
                 }],
             }
         }
 
-        pub fn build(&mut self) {
+        pub fn build(mut self) -> Vec<Block> {
             let done = self.parse_block(0 as usize, None);
             match done {
-                Ok(ast) => {
-                    println!("{:#?}", self.program)
+                Ok(_) => {
+                    println!("{:#?}", self.program);
+                    self.program
                 }
                 Err(err) => {
                     panic!("{}", err);
@@ -425,7 +445,7 @@ pub mod ast {
             &mut self,
             toks: Vec<Token>,
             scope: usize,
-            top_call: bool,
+            _top_call: bool,
         ) -> Result<(AstNode, Vec<VarType>), Errors> {
             let mut tokens = toks.clone().into_iter().enumerate();
 
@@ -446,6 +466,7 @@ pub mod ast {
                                     AstNode::Identifier(Variable {
                                         type_: var.type_.clone(),
                                         name: next_token.data.clone(),
+                                        arg: false,
                                     }),
                                     vec![var.type_.clone()],
                                 ));
@@ -495,11 +516,18 @@ pub mod ast {
             }
 
             let op = {
-                all_operators
-                    .iter()
-                    .min_by(|x, y| x.0.cmp(&y.0))
-                    .expect("No operator")
-                    .1
+                // all_operators
+                //     .iter()
+                //     .min_by(|x, y| x.0.cmp(&y.0))
+                //     .expect("No operator")
+                //     .1
+                let mut winner = all_operators[0];
+                for op in all_operators {
+                    if op.0 <= winner.0 {
+                        winner = op;
+                    }
+                }
+                winner.1
             };
 
             let tok = toks[op].clone();
@@ -586,7 +614,8 @@ pub mod ast {
                 let left = (left.0, left.1[0].clone());
                 let right = (right.0, right.1[0].clone());
 
-                let op_node = BinaryOperator::new(left, right, tok.data.clone())?;
+                let op_variant = Operators::new(tok.data.clone());
+                let op_node = BinaryOperator::new(left, right, op_variant)?;
                 let node = AstNode::BinaryOperator(op_node.0);
                 return Ok((node, vec![op_node.1]));
             }
@@ -645,8 +674,10 @@ pub mod ast {
                     let left = AstNode::Identifier(Variable {
                         name: ident.data,
                         type_: type_.clone(),
+                        arg: false,
                     });
-                    let op_node = BinaryOperator::new((left, type_), exp, "=".to_owned())?;
+                    let op_variant = Operators::new("=".to_owned());
+                    let op_node = BinaryOperator::new((left, type_), exp, op_variant)?;
 
                     Ok((AstNode::BinaryOperator(op_node.0), None))
                 }
@@ -693,7 +724,11 @@ pub mod ast {
                         parent: Some(scope),
                     };
                     for (name, type_) in function_args {
-                        let var = Variable { name, type_ };
+                        let var = Variable {
+                            name,
+                            type_,
+                            arg: true,
+                        };
                         funcblock.variables.push(var);
                     }
 

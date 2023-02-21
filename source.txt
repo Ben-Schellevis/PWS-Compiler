@@ -1,1 +1,7 @@
-((15) -> tostring) -> print;
+func defg(x:int): int 
+    (x) -> return;
+end
+
+func main(): void
+    ((48) -> defg) -> printchar;
+end

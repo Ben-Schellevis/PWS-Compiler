@@ -103,6 +103,45 @@ pub mod ast {
             }
         }
 
+        pub fn get_vars(&self,  parents: &Vec<Block>, depth: u64) -> Vec<String> {
+            let mut res = vec![];
+            for var in &self.variables {
+                let mut name = var.name.clone();
+                name.push_str(format!("-{}", depth).as_str());
+                res.push(name);
+            }
+            for node in &self.data {
+                match node {
+                    AstNode::Block(inner) => {
+                        let nextblock = &parents[*inner];
+                        res.extend(nextblock.get_vars(parents, depth+1));
+                    },
+                    AstNode::Function(_) => {},
+                    AstNode::If(_, inner) => {
+                        match inner.as_ref() {
+                            AstNode::Block(b) => {
+                                let nextblock = &parents[*b];
+                                res.extend(nextblock.get_vars(parents, depth+1));
+                            },
+                            AstNode::Function(_) => todo!(),
+                            AstNode::If(_, _) => todo!(),
+                            AstNode::Literal(_) => todo!(),
+                            AstNode::BinaryOperator(_) => todo!(),
+                            AstNode::FunctionOperator(_) => todo!(),
+                            AstNode::Identifier(_) => todo!(),
+                            AstNode::Unknown => todo!(),
+                        }
+                    },
+                    AstNode::Literal(_) => {},
+                    AstNode::BinaryOperator(_) => {},
+                    AstNode::FunctionOperator(_) => {},
+                    AstNode::Identifier(_) => {},
+                    AstNode::Unknown => {},
+                }
+            }
+            res
+        }
+
         fn add_variable(&mut self, name: String, type_: VarType) {
             self.variables.push(Variable {
                 name,
@@ -362,9 +401,14 @@ pub mod ast {
                             returns: vec![],
                         },
                         FunctionArgs {
-                            func_name: "tostring".to_owned(),
+                            func_name: "printnumber".to_owned(),
                             args: vec![VarType::Number],
-                            returns: vec![VarType::Text],
+                            returns: vec![],
+                        },
+                        FunctionArgs {
+                            func_name: "printchar".to_owned(),
+                            args: vec![VarType::Number],
+                            returns: vec![],
                         },
                     ],
                 }],
@@ -814,7 +858,7 @@ pub mod ast {
                         let call = self.parse_exp(exp, innerscope, true)?.0;
                         self.program[innerscope].data.push(call);
                     }
-                    TokenType::Literal(_) => todo!(),
+                    TokenType::Literal(_) => panic!("did not expect literal did you forget ("),
                     TokenType::Operator => {
                         return Err(Errors::TokenExpected(
                             "A statement".to_owned(),

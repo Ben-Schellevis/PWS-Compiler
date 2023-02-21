@@ -924,7 +924,9 @@ pub mod elf {
             let label = self.label(name);
             self.push("rbp");
             self.mov("rbp", "rsp");
-            self.sub("rsp", size);
+            if size != 0 {
+                self.sub("rsp", size);
+            }
             label
         }
 
@@ -1042,6 +1044,19 @@ pub mod elf {
             self.data.extend(bytes);
             label
         }
+
+        // fn get_data<U>(&mut self, label: U)  -> String
+        // where
+        //     U: Into<String>,
+        // {
+        //     let label = Label {
+        //         name: label.into(),
+        //         offset: false,
+        //         size: 8,
+        //     };
+
+        //     self.data_labels.get(&label).unwrap()
+        // }
 
         //avengers assemble
         fn assemble(&mut self) -> Vec<u8> {
@@ -1169,9 +1184,15 @@ pub mod elf {
                 AstNode::Function(_) => panic!(),
                 AstNode::If(_, _) => panic!(),
                 AstNode::Literal(lit) => {
-                    let number: u64 = lit.data.parse().unwrap();
-                    asm.mov("r10", number);
-                    asm.push("r10");
+                    let number: Result<u64, _> = lit.data.parse();
+                    if let Ok(number) = number {
+                        asm.mov("r10", number);
+                        asm.push("r10");
+                    } else {
+                        let label = asm.add_data(lit.data.clone(), lit.data.clone());
+                        asm.mov("r10", label);
+                        asm.push("r10");
+                    }
                 }
                 AstNode::BinaryOperator(op) => {
                     if op.type_ == Operators::Set {
@@ -1222,29 +1243,55 @@ pub mod elf {
                             asm.pop("r10");
                             asm.mov(format!("[rbp{}]", location).as_str(), "r10");
                         }
-                    } else if func.name == "print" {
-                     
-                        //asm.sub("rsp", 16);
-                        let size = match &func.args[0] {
-                            AstNode::Block(_) => 16,
-                            AstNode::Function(_) => 16,
-                            AstNode::If(_, _) => 16,
-                            AstNode::Literal(lit) => {
-                                lit.data.len() as u64
-                            },
-                            AstNode::BinaryOperator(_) => 16,
-                            AstNode::FunctionOperator(_) => 16,
-                            AstNode::Identifier(_) => 16,
-                            AstNode::Unknown => 16,
-                        };
+                    } else if func.name == "printnumber" {
+                        let size = 16;
                         for arg in &func.args {
                             Elf::parse_boperator(asm, arg, varlocation, block, parents);
                         }
-                        asm.mov("r10", size);
-                        asm.push("r10");
-                        let label = Label::new("print");
-                        asm.call(Box::new(label));
-                        asm.add("rsp", 16);
+                        asm.pop("rax");
+                        let regdumpout = Label::new("regdumpdata");
+                        let regdumplabel = Label::new("regdump");
+                        asm.mov("rbx", regdumpout.clone());
+                        asm.call(Box::new(regdumplabel));
+
+                        asm.syscall(
+                            1,
+                            vec![Box::new(1), Box::new(regdumpout), Box::new(size as u64)],
+                        );
+                    } else if func.name == "print" || func.name == "printchar" {
+                        let size = {
+                            match &func.args[0] {
+                                AstNode::Block(_) => 1,
+                                AstNode::Function(_) => 1,
+                                AstNode::If(_, _) => 1,
+                                AstNode::Literal(lit) => match lit.type_ {
+                                    VarType::Number => 1,
+                                    VarType::Text => lit.data.len() as u64,
+                                    VarType::Bool => 1,
+                                    VarType::Function => 1,
+                                    VarType::Void => 1,
+                                    VarType::Any => 1,
+                                },
+                                AstNode::BinaryOperator(_) => 1,
+                                AstNode::FunctionOperator(_) => 1,
+                                AstNode::Identifier(_) => 1,
+                                AstNode::Unknown => 1,
+                            }
+                        };
+
+                        for arg in &func.args {
+                            Elf::parse_boperator(asm, arg, varlocation, block, parents);
+                        }
+
+                        if size == 1 {
+                            let regdumpout = Label::new("regdumpdata");
+                            asm.pop("r11");
+                            asm.mov("r10", regdumpout);
+                            asm.mov("[r10]", "r11");
+                        } else {
+                            asm.pop("r10");
+                        }
+                        asm.syscall(1, vec![Box::new(1), Box::new("r10"), Box::new(size as u64)]);
                     } else {
                         let func_obj = block.get_func(func.name.clone(), parents).unwrap();
                         asm.sub("rsp", (func_obj.returns.len() as u64) * 8);
@@ -1274,11 +1321,41 @@ pub mod elf {
             block: &Block,
             varlocation: &HashMap<String, i32>,
             parents: &Vec<Block>,
+            depth: u64
         ) {
             for node in &block.data {
                 match node {
                     AstNode::Block(_) => todo!(),
-                    AstNode::Function(_) => todo!(),
+                    AstNode::Function(func) => {
+                        let mut newvarloc: HashMap<String, i32> = HashMap::new();
+                        let func_obj = block.get_func(func.name.clone(), parents).unwrap();
+
+                        let mut argsize = (func_obj.args.len() * 8) as i32 + 8;
+                        let mut localsize = 0;
+                        let inner = &parents[func.inner_block];
+                        let mut returnsize = argsize + (func_obj.returns.len() * 8) as i32;
+                        for (i, _) in func_obj.returns.iter().enumerate() {
+                            newvarloc.insert(format!("return-{}", i), returnsize);
+                            returnsize -= 8;
+                        }
+                        
+                        for var in &inner.variables {
+                            if var.arg {
+                                newvarloc.insert(var.name.clone(), argsize);
+                                argsize -= 8;
+                            }
+                            // } else {
+                            //     localsize += 8;
+                            //     newvarloc.insert(var.name.clone(), localsize * -1);
+                            // }
+                        };
+                        for var in 
+
+
+                        asm.start_func(func.name.clone(), localsize as u64);
+                        Elf::parse_block(asm, inner, &newvarloc, parents, depth + 1);
+                        asm.end_func();
+                    }
                     AstNode::If(_, _) => todo!(),
                     AstNode::Literal(_) => todo!(),
                     AstNode::BinaryOperator(_) => {
@@ -1304,7 +1381,6 @@ pub mod elf {
             asm.end_func();
         }
 
-
         fn add_print(asm: &mut Assembly) {
             asm.start_func("print", 0);
             asm.syscall(
@@ -1327,31 +1403,30 @@ pub mod elf {
 
             asm.call(Box::new(main));
             asm.syscall(60, vec![Box::new(0)]);
-            
+
             // asm.label("regdump");
             // asm.raw_bytes(regdump);
-            
+
             let start = &code[1]; //1 not - 0 is global scop
             let mut totalsize: u64 = 0;
             let mut varlocation: HashMap<String, i32> = HashMap::new();
-            
+
             for var in &start.variables {
                 let size = if var.type_ == VarType::Bool { 1 } else { 8 };
                 totalsize += size;
                 varlocation.insert(var.name.clone(), (totalsize as i32) * -1);
             }
-            asm.start_func("main", totalsize);
-            
-            Elf::parse_block(&mut asm, &start, &varlocation, &code);
-            
+            //asm.start_func("main", totalsize);
+
+            Elf::parse_block(&mut asm, &start, &varlocation, &code, 0 );
             //asm.mov("rax", "[rbp-8]");
             //Elf::print(&mut asm);
-            asm.end_func();
-            Elf::add_print(&mut asm);
-            Elf::add_tostring(&mut asm);
-            asm.label("regdump");
-            asm.raw_bytes(decode_hex(regdump).unwrap());
-            
+            //asm.end_func();
+            // Elf::add_print(&mut asm);
+            // Elf::add_tostring(&mut asm);
+            // asm.label("regdump");
+            // asm.raw_bytes(decode_hex(regdump).unwrap());
+
             let code = asm.assemble();
             Elf::build(code)
         }
@@ -1461,6 +1536,3 @@ pub mod elf {
         }
     }
 }
-
-
-

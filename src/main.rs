@@ -40,6 +40,7 @@ fn main() {
         "if",
         "func",
         "end",
+        "while",
         type: TokenType::Keyword
     ));
 

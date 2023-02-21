@@ -407,6 +407,42 @@ pub mod elf {
         }
     }
 
+    struct Jgreater {
+        left: Box<dyn Operhand>,
+    }
+
+    impl Instruction for Jgreater {
+        fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
+            let res = Assembly::encode_instructon(EncodeArgs {
+                opcode: vec![0x0F, 0x8F],
+                operhandsize: Some(Bitness::_32),
+                left: Some(self.left.as_ref()),
+                ..Default::default()
+            });
+
+            res
+        }
+    }
+
+    struct Jlower {
+        left: Box<dyn Operhand>,
+    }
+
+    impl Instruction for Jlower {
+        fn to_bytes(&self, asm: &Assembly) -> Vec<ByteOrLabel> {
+            let res = Assembly::encode_instructon(EncodeArgs {
+                opcode: vec![0x0F, 0x8C],
+                operhandsize: Some(Bitness::_32),
+                left: Some(self.left.as_ref()),
+                ..Default::default()
+            });
+
+            res
+        }
+    }
+
+
+
     struct Add {
         left: Register,
         right: Box<dyn Operhand>,
@@ -566,6 +602,18 @@ pub mod elf {
                 size: 8,
             }
         }
+        fn new_uniqe(instruction_labels: &HashMap<Label, usize>)  -> Label {
+            let mut name = "".to_string();
+            for (label, _) in instruction_labels {
+                let ch = (label.name.clone().chars().next().unwrap() as u8 + 1) as char;
+                name.push(ch);
+            }
+            Label {
+                name,
+                offset: false,
+                size: 8,
+            }
+        }
     }
     impl Hash for Label {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -696,7 +744,7 @@ pub mod elf {
                     if let Some(reg) = reg.register() {
                         let mut index = reg.index();
                         let mut regsize = reg.rex_64();
-                        modrm = Some(modrm.unwrap() + (reg.mode() << 6) + index);
+                        
 
                         if let Some(size) = operhandsize {
                             regsize = size == Bitness::_64 || reg.rex_64();
@@ -715,10 +763,13 @@ pub mod elf {
                                 panic!();
                             }
                         }
+                        
+                        
                         if regsize || index > 0b111 {
                             rex = Some((0b0100 << 4) + (index >> 3) + ((regsize as u8) << 3));
                             index = index & 0b0111;
                         }
+                        modrm = Some(modrm.unwrap() + (reg.mode() << 6) + index);
                     } else {
                         panic!("no register but digit was given")
                     }
@@ -841,6 +892,10 @@ pub mod elf {
             self.data_labels.insert(label, adress);
         }
 
+        fn add_instruction_label(&mut self, label: Label, adress: usize) {
+            self.instruction_labels.insert(label, adress);
+        }
+
         fn mov_internal(&mut self, left: Register, right: Box<dyn Operhand>) -> usize {
             let mov = Mov { left, right };
             self.instructions.push(Box::new(mov));
@@ -907,6 +962,11 @@ pub mod elf {
             self.instructions.push(Box::new(mult));
         }
 
+        fn nop(&mut self) {
+            self.instructions.push(Box::new(0x90));
+        }
+
+
         fn call(&mut self, op1: Box<dyn IntoOperhand>) -> usize {
             let operhand = op1.build();
             if let Some(_) = operhand.immediate() {
@@ -966,6 +1026,38 @@ pub mod elf {
             let jnz = Jnz { left: operhand };
             self.instructions.push(Box::new(jnz));
         }
+
+        fn jgreater(&mut self, op1: Box<dyn IntoOperhand>) {
+            let mut operhand = op1.build();
+            if let Some(_) = operhand.immediate() {
+                panic!("cant call on immediant value");
+            } else if let Some(label) = operhand.label() {
+                operhand = Box::new(Label {
+                    name: label.name.clone(),
+                    offset: true,
+                    size: 4,
+                });
+            }
+            let jnz = Jgreater { left: operhand };
+            self.instructions.push(Box::new(jnz));
+        }
+
+
+        fn jsmaller(&mut self, op1: Box<dyn IntoOperhand>) {
+            let mut operhand = op1.build();
+            if let Some(_) = operhand.immediate() {
+                panic!("cant call on immediant value");
+            } else if let Some(label) = operhand.label() {
+                operhand = Box::new(Label {
+                    name: label.name.clone(),
+                    offset: true,
+                    size: 4,
+                });
+            }
+            let jnz = Jlower { left: operhand };
+            self.instructions.push(Box::new(jnz));
+        }
+
 
         fn jz(&mut self, op1: Box<dyn IntoOperhand>) {
             let mut operhand = op1.build();
@@ -1215,7 +1307,13 @@ pub mod elf {
                         asm.pop("r11");
                         match op.type_ {
                             Operators::Eq => {
+                                let label = Label::new_uniqe(&asm.instruction_labels);
                                 asm.cmp("r10", "r11");
+                                asm.mov("r10", 0);
+                                asm.jnz(Box::new(label.clone()));
+                                asm.mov("r10", 1);
+                                asm.label(label.name);
+                                asm.push("r10");
                             }
                             Operators::Plus => {
                                 asm.add("r10", "r11");
@@ -1227,7 +1325,29 @@ pub mod elf {
                             }
                             Operators::Set => panic!(),
                             Operators::Divide => todo!(),
-                            Operators::Mult => todo!(),
+                            Operators::Mult => {
+                                asm.mult("r10", "r11");
+                                asm.push("r10");
+                            },
+                            Operators::Greater => {
+                                let label = Label::new_uniqe(&asm.instruction_labels);
+                                asm.cmp("r11", "r10");
+                                asm.mov("r10", 1);
+                                asm.jgreater(Box::new(label.clone()));
+                                asm.mov("r10", 0);
+                                asm.label(label.name);
+                                asm.push("r10");
+                            },
+                            Operators::Less => {
+                                let label = Label::new_uniqe(&asm.instruction_labels);
+                                asm.cmp("r11", "r10");
+                                asm.mov("r10", 1);
+                                asm.jsmaller(Box::new(label.clone()));
+                                asm.mov("r10", 0);
+                                asm.label(label.name);
+                                asm.push("r10");
+                            },
+                            
                         }
                     }
                 }
@@ -1243,7 +1363,7 @@ pub mod elf {
                             asm.pop("r10");
                             asm.mov(format!("[rbp{}]", location).as_str(), "r10");
                         }
-                    } else if func.name == "printnumber" {
+                    } else if func.name == "printnumber" ||  func.name == "printbool" {
                         let size = 16;
                         for arg in &func.args {
                             Elf::parse_boperator(asm, arg, varlocation, block, parents);
@@ -1264,6 +1384,7 @@ pub mod elf {
                                 AstNode::Block(_) => 1,
                                 AstNode::Function(_) => 1,
                                 AstNode::If(_, _) => 1,
+                                AstNode::While(_, _) => 1,
                                 AstNode::Literal(lit) => match lit.type_ {
                                     VarType::Number => 1,
                                     VarType::Text => lit.data.len() as u64,
@@ -1304,6 +1425,7 @@ pub mod elf {
                     }
                 }
                 AstNode::Identifier(ident) => {
+                    //name.push_str(format!(""))
                     let location = *varlocation.get(&ident.name).unwrap();
                     let mut location = location.to_string();
                     if location.chars().next().unwrap() != '-' {
@@ -1312,6 +1434,7 @@ pub mod elf {
                     asm.mov("r10", format!("[rbp{}]", location));
                     asm.push("r10");
                 }
+                AstNode::While(_, _)=> panic!(),
                 AstNode::Unknown => panic!(),
             }
         }
@@ -1321,7 +1444,6 @@ pub mod elf {
             block: &Block,
             varlocation: &HashMap<String, i32>,
             parents: &Vec<Block>,
-            depth: u64
         ) {
             for node in &block.data {
                 match node {
@@ -1330,33 +1452,57 @@ pub mod elf {
                         let mut newvarloc: HashMap<String, i32> = HashMap::new();
                         let func_obj = block.get_func(func.name.clone(), parents).unwrap();
 
-                        let mut argsize = (func_obj.args.len() * 8) as i32 + 8;
                         let mut localsize = 0;
                         let inner = &parents[func.inner_block];
+                        
+                        
+                        let mut argsize = 8;
+                        for var in &inner.variables {
+                            if var.arg {
+                                argsize += 8;
+                            }
+                        };
                         let mut returnsize = argsize + (func_obj.returns.len() * 8) as i32;
                         for (i, _) in func_obj.returns.iter().enumerate() {
                             newvarloc.insert(format!("return-{}", i), returnsize);
                             returnsize -= 8;
                         }
                         
+
                         for var in &inner.variables {
                             if var.arg {
                                 newvarloc.insert(var.name.clone(), argsize);
                                 argsize -= 8;
                             }
-                            // } else {
-                            //     localsize += 8;
-                            //     newvarloc.insert(var.name.clone(), localsize * -1);
-                            // }
                         };
-                        for var in 
-
+                        for var in inner.get_vars(parents) {
+                            if newvarloc.get(&var).is_none() {
+                                localsize += 8;
+                                newvarloc.insert(var.clone(), localsize * -1);
+                            }
+                        }
+                        
 
                         asm.start_func(func.name.clone(), localsize as u64);
-                        Elf::parse_block(asm, inner, &newvarloc, parents, depth + 1);
+                        Elf::parse_block(asm, inner, &newvarloc, parents);
                         asm.end_func();
                     }
-                    AstNode::If(_, _) => todo!(),
+                    AstNode::If(cond, inner) => {
+                        let label = Label::new_uniqe(&asm.instruction_labels);
+                        let inner = match inner.as_ref() {
+                            AstNode::Block(blo) => blo,
+                            _ => panic!()
+                        };
+                        let inner = &parents[*inner];
+                        Elf::parse_boperator(asm, cond, varlocation, block, parents);
+                        asm.pop("r10");
+                        asm.mov("r11", 1);
+                        asm.cmp("r10", "r11");
+                        asm.jnz(Box::new(label.clone()));
+                        Elf::parse_block(asm, inner, varlocation, parents);
+                        asm.label(label.clone().name);
+                        asm.nop();
+                    },
                     AstNode::Literal(_) => todo!(),
                     AstNode::BinaryOperator(_) => {
                         Elf::parse_boperator(asm, node, varlocation, block, parents);
@@ -1365,6 +1511,30 @@ pub mod elf {
                         Elf::parse_boperator(asm, node, varlocation, block, parents);
                     }
                     AstNode::Identifier(_) => todo!(),
+                    AstNode::While(cond, inner)=> {
+                        let condlabel = Label::new_uniqe(&asm.instruction_labels);
+                        asm.add_instruction_label(condlabel.clone(), 0);
+                        let endlabel = Label::new_uniqe(&asm.instruction_labels);
+                        asm.add_instruction_label(endlabel.clone(), 0);
+
+                        let inner = match inner.as_ref() {
+                            AstNode::Block(blo) => blo,
+                            _ => panic!()
+                        };
+                        let inner = &parents[*inner];
+                        asm.label(condlabel.clone().name);
+                        Elf::parse_boperator(asm, cond, varlocation, block, parents);
+
+                        asm.pop("r10");
+                        asm.mov("r11", 1);
+                        asm.cmp("r10", "r11");
+
+                        asm.jnz(Box::new(endlabel.clone()));
+                        Elf::parse_block(asm, inner, varlocation, parents);
+                        asm.jump(Box::new(condlabel));
+                        asm.label(endlabel.clone().name);
+                        asm.nop();
+                    },
                     AstNode::Unknown => todo!(),
                 }
             }
@@ -1410,7 +1580,7 @@ pub mod elf {
             let start = &code[1]; //1 not - 0 is global scop
             let mut totalsize: u64 = 0;
             let mut varlocation: HashMap<String, i32> = HashMap::new();
-
+            
             for var in &start.variables {
                 let size = if var.type_ == VarType::Bool { 1 } else { 8 };
                 totalsize += size;
@@ -1418,14 +1588,14 @@ pub mod elf {
             }
             //asm.start_func("main", totalsize);
 
-            Elf::parse_block(&mut asm, &start, &varlocation, &code, 0 );
+            Elf::parse_block(&mut asm, &start, &varlocation, &code);
             //asm.mov("rax", "[rbp-8]");
             //Elf::print(&mut asm);
             //asm.end_func();
             // Elf::add_print(&mut asm);
             // Elf::add_tostring(&mut asm);
-            // asm.label("regdump");
-            // asm.raw_bytes(decode_hex(regdump).unwrap());
+            asm.label("regdump");
+            asm.raw_bytes(decode_hex(regdump).unwrap());
 
             let code = asm.assemble();
             Elf::build(code)

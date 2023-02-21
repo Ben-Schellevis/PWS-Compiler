@@ -103,40 +103,41 @@ pub mod ast {
             }
         }
 
-        pub fn get_vars(&self,  parents: &Vec<Block>, depth: u64) -> Vec<String> {
+        pub fn get_vars(&self, parents: &Vec<Block>) -> Vec<String> {
             let mut res = vec![];
             for var in &self.variables {
                 let mut name = var.name.clone();
-                name.push_str(format!("-{}", depth).as_str());
+                //name.push_str(format!("-{}", depth).as_str());
                 res.push(name);
             }
             for node in &self.data {
                 match node {
                     AstNode::Block(inner) => {
                         let nextblock = &parents[*inner];
-                        res.extend(nextblock.get_vars(parents, depth+1));
-                    },
-                    AstNode::Function(_) => {},
-                    AstNode::If(_, inner) => {
-                        match inner.as_ref() {
-                            AstNode::Block(b) => {
-                                let nextblock = &parents[*b];
-                                res.extend(nextblock.get_vars(parents, depth+1));
-                            },
-                            AstNode::Function(_) => todo!(),
-                            AstNode::If(_, _) => todo!(),
-                            AstNode::Literal(_) => todo!(),
-                            AstNode::BinaryOperator(_) => todo!(),
-                            AstNode::FunctionOperator(_) => todo!(),
-                            AstNode::Identifier(_) => todo!(),
-                            AstNode::Unknown => todo!(),
+                        res.extend(nextblock.get_vars(parents));
+                    }
+                    AstNode::Function(_) => {}
+
+                    AstNode::If(_, inner) => match inner.as_ref() {
+                        AstNode::Block(b) => {
+                            let nextblock = &parents[*b];
+                            res.extend(nextblock.get_vars(parents));
                         }
+                        AstNode::Function(_) => todo!(),
+                        AstNode::While(_, _)=> {}
+                        AstNode::If(_, _) => todo!(),
+                        AstNode::Literal(_) => todo!(),
+                        AstNode::BinaryOperator(_) => todo!(),
+                        AstNode::FunctionOperator(_) => todo!(),
+                        AstNode::Identifier(_) => todo!(),
+                        AstNode::Unknown => todo!(),
                     },
-                    AstNode::Literal(_) => {},
-                    AstNode::BinaryOperator(_) => {},
-                    AstNode::FunctionOperator(_) => {},
-                    AstNode::Identifier(_) => {},
-                    AstNode::Unknown => {},
+                    AstNode::Literal(_) => {}
+                    AstNode::BinaryOperator(_) => {}
+                    AstNode::FunctionOperator(_) => {}
+                    AstNode::Identifier(_) => {}
+                    AstNode::While(_, _)=> {}
+                    AstNode::Unknown => {}
                 }
             }
             res
@@ -166,6 +167,8 @@ pub mod ast {
         Set,
         Divide,
         Mult,
+        Greater,
+        Less
     }
 
     impl Operators {
@@ -177,9 +180,10 @@ pub mod ast {
                 "=" => Operators::Set,
                 "/" => Operators::Divide,
                 "*" => Operators::Mult,
-                _ => panic!("not a operator")
+                ">" => Operators::Greater,
+                "<" => Operators::Less,
+                _ => panic!("not a operator"),
             }
-
         }
     }
 
@@ -213,6 +217,18 @@ pub mod ast {
                         ))
                     }
                 }
+
+                Operators::Greater | Operators::Less => {
+                    if left == VarType::Number && right == VarType::Number {
+                        return Ok(VarType::Bool);
+                    } else {
+                        Err(Errors::WrongType(
+                            vec![left, right],
+                            vec![VarType::Number, VarType::Number],
+                        ))
+                    }
+                }
+
                 Operators::Set => {
                     if left == right {
                         return Ok(right);
@@ -294,6 +310,7 @@ pub mod ast {
         Block(usize),
         Function(Function),
         If(Box<AstNode>, Box<AstNode>),
+        While(Box<AstNode>, Box<AstNode>),
         Literal(Literal),
         BinaryOperator(BinaryOperator),
         FunctionOperator(FunctionOperator),
@@ -346,7 +363,7 @@ pub mod ast {
         greater: -1,
         not: 5,
         function: 10,
-        set: 9,
+        set: -5,
     };
 
     #[derive(Debug)]
@@ -408,6 +425,11 @@ pub mod ast {
                         FunctionArgs {
                             func_name: "printchar".to_owned(),
                             args: vec![VarType::Number],
+                            returns: vec![],
+                        },
+                        FunctionArgs {
+                            func_name: "printbool".to_owned(),
+                            args:vec![VarType::Bool],
                             returns: vec![],
                         },
                     ],
@@ -685,6 +707,23 @@ pub mod ast {
                     let block = self.parse_block(scope, None)?;
                     Ok((
                         AstNode::If(Box::new(logical_exp.0), Box::new(AstNode::Block(block.0))),
+                        Some((block.1, block.2)),
+                    ))
+                },
+                "while" => {
+                    let mut next_token = self.lex.next_token().expect("exepected do");
+                    let mut logical_nodes = vec![];
+                    while next_token.data != "do" {
+                        logical_nodes.push(next_token);
+                        next_token = self.lex.next_token().expect("exepected do");
+                    }
+                    let logical_exp = self.parse_exp(logical_nodes, scope, false)?;
+                    if logical_exp.1.len() == 0 || logical_exp.1[0] != VarType::Bool {
+                        return Err(Errors::WrongType(vec![VarType::Bool], logical_exp.1));
+                    }
+                    let block = self.parse_block(scope, None)?;
+                    Ok((
+                        AstNode::While(Box::new(logical_exp.0), Box::new(AstNode::Block(block.0))),
                         Some((block.1, block.2)),
                     ))
                 }

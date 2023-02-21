@@ -1,7 +1,33 @@
-func defg(x:int): int 
-    (x) -> return;
-end
+
 
 func main(): void
-    ((48) -> defg) -> printchar;
+    let n:int = 1;
+    let first:int = 0;
+    let second:int = 1;
+    (n) -> printnumber;
+    (58) -> printchar;
+    (32) -> printchar;
+    (first) -> printnumber;
+    (10) -> printchar;
+    n = n + 1;
+    (n) -> printnumber;
+    (58) -> printchar;
+    (32) -> printchar;
+    (second) -> printnumber;
+    (10) -> printchar;
+    n = n + 1;
+
+
+    let temp:int = 0;
+    while n < 25 + 1 do
+        temp = first + second;
+        (n) -> printnumber;
+        (58) -> printchar;
+        (32) -> printchar;
+        (temp) -> printnumber;
+        (10) -> printchar;
+        first = second;
+        second = temp;
+        n = n + 1;
+    end
 end

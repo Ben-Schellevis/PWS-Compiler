@@ -662,68 +662,6 @@ pub mod elf {
             self.instructions.push(Box::new(buf));
         }
 
-        fn parse_two_operhands(
-            &self,
-            left: &dyn Operhand,
-            right: &dyn Operhand,
-            digit: Option<u8>,
-        ) -> (Vec<ByteOrLabel>, Vec<ByteOrLabel>) {
-            let mut rex: Option<u8> = None;
-
-            let mut index = left.register().unwrap().index();
-            if left.rex_64() {
-                if index > 0b111 {
-                    index = index ^ 0b1000;
-                    rex = Some(0b01001100);
-                } else {
-                    rex = Some(0b01001000);
-                }
-            }
-
-            let mut modrm = None;
-            if let Some(digit) = digit {
-                modrm = Some((0b11 << 6) + (digit << 3) + index);
-            }
-            let mut operhands = vec![];
-            if let Some(reg) = right.register() {
-                let mut other_reg = reg.index();
-                if other_reg > 0b111 {
-                    other_reg = other_reg ^ 0b1000;
-                    if let Some(rex_) = rex {
-                        rex = Some(rex_ | 1);
-                    } else {
-                        rex = Some(0b01001001)
-                    }
-                }
-
-                modrm = Some((0b11 << 6) + (index << 3) + other_reg); // Mod rm
-            } else if let Some(imm) = right.immediate() {
-                let is32 = imm.size == Bitness::_32;
-                let bytes = imm.to_bytes();
-                let mut as_bytes = vec![];
-                if is32 {
-                    rex = None;
-                }
-                for byte in bytes {
-                    as_bytes.push(ByteOrLabel::Byte(byte))
-                }
-                operhands.extend(as_bytes);
-            } else if let Some(label) = right.label() {
-                operhands.push(ByteOrLabel::Label(label.clone()))
-            }
-
-            let mut res = (vec![], vec![]);
-            if let Some(rex) = rex {
-                res.0.push(ByteOrLabel::Byte(rex));
-            }
-
-            if let Some(modrm) = modrm {
-                res.1.push(ByteOrLabel::Byte(modrm));
-            }
-            res.1.extend(operhands);
-            res
-        }
-
         fn encode_instructon(args: EncodeArgs) -> Vec<ByteOrLabel> {
             //dbg!(args.clone());
             let mut opcode = args.opcode;
@@ -966,7 +904,6 @@ pub mod elf {
             self.instructions.push(Box::new(0x90));
         }
 
-
         fn call(&mut self, op1: Box<dyn IntoOperhand>) -> usize {
             let operhand = op1.build();
             if let Some(_) = operhand.immediate() {
@@ -1137,19 +1074,6 @@ pub mod elf {
             label
         }
 
-        // fn get_data<U>(&mut self, label: U)  -> String
-        // where
-        //     U: Into<String>,
-        // {
-        //     let label = Label {
-        //         name: label.into(),
-        //         offset: false,
-        //         size: 8,
-        //     };
-
-        //     self.data_labels.get(&label).unwrap()
-        // }
-
         //avengers assemble
         fn assemble(&mut self) -> Vec<u8> {
             let mut insruction_map: HashMap<Label, u64> = HashMap::new();
@@ -1276,14 +1200,25 @@ pub mod elf {
                 AstNode::Function(_) => panic!(),
                 AstNode::If(_, _) => panic!(),
                 AstNode::Literal(lit) => {
-                    let number: Result<u64, _> = lit.data.parse();
-                    if let Ok(number) = number {
-                        asm.mov("r10", number);
-                        asm.push("r10");
-                    } else {
-                        let label = asm.add_data(lit.data.clone(), lit.data.clone());
-                        asm.mov("r10", label);
-                        asm.push("r10");
+                    match lit.type_ {
+                        VarType::Number => {
+                            let number: u64 = lit.data.parse().unwrap();
+                            asm.mov("r10", number);
+                            asm.push("r10");
+                        },
+                        VarType::Text =>{
+                            let label = asm.add_data(lit.data.clone(), lit.data.clone());
+                            asm.mov("r10", label);
+                            asm.push("r10");
+                        },
+                        VarType::Bool => {
+                            let number: bool = lit.data.parse().unwrap();
+                            asm.mov("r10", number as u64);
+                            asm.push("r10");
+                        },
+                        VarType::Function => panic!(),
+                        VarType::Void => {},
+                        VarType::Any => panic!(),
                     }
                 }
                 AstNode::BinaryOperator(op) => {
@@ -1362,6 +1297,7 @@ pub mod elf {
                             Elf::parse_boperator(asm, arg, varlocation, block, parents);
                             asm.pop("r10");
                             asm.mov(format!("[rbp{}]", location).as_str(), "r10");
+                            asm.end_func();
                         }
                     } else if func.name == "printnumber" ||  func.name == "printbool" {
                         let size = 16;
@@ -1447,7 +1383,9 @@ pub mod elf {
         ) {
             for node in &block.data {
                 match node {
-                    AstNode::Block(_) => todo!(),
+                    AstNode::Block(b) => {
+                        Elf::parse_block(asm, &parents[*b], varlocation, parents)
+                    },
                     AstNode::Function(func) => {
                         let mut newvarloc: HashMap<String, i32> = HashMap::new();
                         let func_obj = block.get_func(func.name.clone(), parents).unwrap();
@@ -1700,6 +1638,8 @@ pub mod elf {
         pub fn write(mut self) {
             self.header.extend(self.program_header.into_iter());
             self.header.extend(self.code.into_iter());
+
+            //naam met toetstemming.
             if let Err(err) = fs::write("./robin_is_irritant", self.header) {
                 println!("{}", err)
             }

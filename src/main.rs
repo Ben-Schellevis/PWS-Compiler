@@ -17,7 +17,7 @@ fn main() {
     let mut node = Node::new(TokenType::Unkown, false, None);
 
     let mut strings = vec![
-        pat!("\"", false, "abcdefghijklmnopqrstuvwxyz1234567890", true, "\"", false, type: TokenType::Literal(Literal::String)),
+        pat!("\"", false, "abcdefghijklmnopqrstuvwxyz1234567890!,", true, "\"", false, type: TokenType::Literal(Literal::String)),
         pat!("1234567890", true, type: TokenType::Literal(Literal::Number)),
 
         Pattern::Str(("true".to_owned(), TokenType::Literal(Literal::Bool))),

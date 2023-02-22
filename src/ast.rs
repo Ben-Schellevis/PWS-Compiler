@@ -1,5 +1,5 @@
 pub mod ast {
-    use std::{error::Error, fmt, string, vec};
+    use std::{error::Error, fmt, vec};
 
     use crate::lexer::lexer::{Lexer, Literal as TokenLiteral, Token, TokenType};
 
@@ -35,13 +35,20 @@ pub mod ast {
                     },
                     VarType::Number,
                 ),
-                TokenLiteral::String => (
-                    Literal {
-                        type_: VarType::Text,
-                        data,
-                    },
-                    VarType::Text,
-                ),
+                TokenLiteral::String => {
+                    let mut data = data;
+                    let mut chars = data.chars();
+                    chars.next();
+                    chars.next_back();
+                    data =  chars.collect();
+                    (
+                        Literal {
+                            type_: VarType::Text,
+                            data,
+                        },
+                        VarType::Text,
+                    )
+                }
             }
         }
     }
@@ -124,7 +131,7 @@ pub mod ast {
                             res.extend(nextblock.get_vars(parents));
                         }
                         AstNode::Function(_) => todo!(),
-                        AstNode::While(_, _)=> {}
+                        AstNode::While(_, _) => {}
                         AstNode::If(_, _) => todo!(),
                         AstNode::Literal(_) => todo!(),
                         AstNode::BinaryOperator(_) => todo!(),
@@ -136,7 +143,7 @@ pub mod ast {
                     AstNode::BinaryOperator(_) => {}
                     AstNode::FunctionOperator(_) => {}
                     AstNode::Identifier(_) => {}
-                    AstNode::While(_, _)=> {}
+                    AstNode::While(_, _) => {}
                     AstNode::Unknown => {}
                 }
             }
@@ -168,7 +175,7 @@ pub mod ast {
         Divide,
         Mult,
         Greater,
-        Less
+        Less,
     }
 
     impl Operators {
@@ -429,7 +436,7 @@ pub mod ast {
                         },
                         FunctionArgs {
                             func_name: "printbool".to_owned(),
-                            args:vec![VarType::Bool],
+                            args: vec![VarType::Bool],
                             returns: vec![],
                         },
                     ],
@@ -581,6 +588,13 @@ pub mod ast {
                 all_operators.push((PRECEDENCE.get(tok.data.clone()), op.0))
             }
 
+            if all_operators.len() == 0 {
+                return Ok((AstNode::Literal(
+                Literal {
+                    type_: VarType::Void,
+                    data: "".to_string(),
+                }), vec![]));
+            };
             let op = {
                 // all_operators
                 //     .iter()
@@ -709,7 +723,7 @@ pub mod ast {
                         AstNode::If(Box::new(logical_exp.0), Box::new(AstNode::Block(block.0))),
                         Some((block.1, block.2)),
                     ))
-                },
+                }
                 "while" => {
                     let mut next_token = self.lex.next_token().expect("exepected do");
                     let mut logical_nodes = vec![];
